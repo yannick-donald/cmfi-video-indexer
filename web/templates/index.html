@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ app_name }} — Video Library</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div>
+        <p class="eyebrow">Google Drive Video Inventory</p>
+        <h1>Search your video library</h1>
+      </div>
+      <div class="stats-bar" id="statsBar">
+        <div class="stat"><span class="stat-label">Videos</span><strong id="statVideos">—</strong></div>
+        <div class="stat"><span class="stat-label">Storage</span><strong id="statStorage">—</strong></div>
+        <div class="stat"><span class="stat-label">Duration</span><strong id="statDuration">—</strong></div>
+      </div>
+    </header>
+
+    <section class="toolbar">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 3a7.5 7.5 0 1 1 0 15 7.5 7.5 0 0 1 0-15Zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11Zm8.03 13.47-3.2-3.2 1.42-1.42 3.2 3.2-1.42 1.42Z"/></svg>
+        <input id="searchInput" type="search" placeholder="Search by name, folder, owner..." autocomplete="off">
+      </div>
+      <div class="toolbar-actions">
+        <select id="sortBy">
+          <option value="file_name">Sort: Name</option>
+          <option value="modified_at">Sort: Modified</option>
+          <option value="file_size">Sort: Size</option>
+          <option value="duration_seconds">Sort: Duration</option>
+          <option value="folder_path">Sort: Folder</option>
+          <option value="resolution">Sort: Resolution</option>
+        </select>
+        <select id="sortDir">
+          <option value="asc">Ascending</option>
+          <option value="desc">Descending</option>
+        </select>
+        <button id="resetFilters" type="button" class="btn-secondary">Reset</button>
+        <label class="semantic-toggle">
+          <input id="semanticToggle" type="checkbox">
+          Semantic
+        </label>
+      </div>
+    </section>
+
+    <div class="layout">
+      <aside class="filters">
+        <h2>Filters</h2>
+
+        <label>
+          Folder
+          <select id="folderFilter"><option value="">All folders</option></select>
+        </label>
+
+        <label>
+          Format
+          <select id="extensionFilter"><option value="">All formats</option></select>
+        </label>
+
+        <label>
+          Resolution
+          <select id="resolutionFilter"><option value="">All resolutions</option></select>
+        </label>
+
+        <label>
+          Year
+          <select id="yearFilter"><option value="">All years</option></select>
+        </label>
+
+        <label>
+          Shared drive
+          <select id="sharedDriveFilter"><option value="">All drives</option></select>
+        </label>
+
+        <label>
+          Audio
+          <select id="audioFilter">
+            <option value="">Any</option>
+            <option value="true">With audio</option>
+            <option value="false">No audio</option>
+          </select>
+        </label>
+
+        <div class="range-group">
+          <label>Min size (MB)<input id="minSizeFilter" type="number" min="0" step="1"></label>
+          <label>Max size (MB)<input id="maxSizeFilter" type="number" min="0" step="1"></label>
+        </div>
+
+        <div class="range-group">
+          <label>Min duration (sec)<input id="minDurationFilter" type="number" min="0" step="1"></label>
+          <label>Max duration (sec)<input id="maxDurationFilter" type="number" min="0" step="1"></label>
+        </div>
+
+        <hr class="filters-separator">
+        <h2>On-demand scan</h2>
+        <p class="filters-help">
+          Paste a Google Drive <strong>folder URL or ID</strong> (works for My Drive, Shared drives,
+          and folders shared with you), then run a focused scan.
+        </p>
+        <label>
+          Folder URL or ID
+          <input id="scanFolderInput" type="text" placeholder="https://drive.google.com/drive/folders/...">
+        </label>
+        <button id="scanFolderButton" type="button">Scan this folder</button>
+        <p id="scanFolderStatus" class="filters-status"></p>
+      </aside>
+
+      <main class="results">
+        <div class="results-meta">
+          <p id="resultsSummary">Loading videos...</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Folder</th>
+                <th>Format</th>
+                <th>Resolution</th>
+                <th>Duration</th>
+                <th>Size</th>
+                <th>Modified</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody">
+              <tr><td colspan="8" class="empty">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="pagination">
+          <button id="prevPage" type="button" class="btn-secondary" disabled>Previous</button>
+          <span id="pageInfo">Page 1</span>
+          <button id="nextPage" type="button" class="btn-secondary" disabled>Next</button>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="detailDialog">
+    <form method="dialog">
+      <article id="detailContent"></article>
+      <menu>
+        <button value="cancel" class="btn-secondary">Close</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
