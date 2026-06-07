@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ app_name }} — Video Library</title>
-  <link rel="stylesheet" href="/static/style.css?v=christian-metadata-1">
+  <link rel="stylesheet" href="/static/style.css?v=labels-2">
 </head>
 <body>
   <div class="app">
     <header class="header">
       <div>
-        <p class="eyebrow">Google Drive Video Inventory</p>
-        <h1>Search your video library</h1>
+        <p class="eyebrow">Dpt DIGITAL · Production vidéo</p>
+        <h1>Suivi de la chaîne de production</h1>
       </div>
       <div class="stats-bar" id="statsBar">
         <div class="stat"><span class="stat-label">Videos</span><strong id="statVideos">—</strong></div>
@@ -20,10 +20,53 @@
       </div>
     </header>
 
+    <nav class="view-tabs" aria-label="Vues">
+      <button class="view-tab active" type="button" data-view="production">Production</button>
+      <button class="view-tab" type="button" data-view="library">Bibliothèque</button>
+    </nav>
+
+    <section id="productionOverview" class="production-overview">
+      <div class="workflow-cards" id="workflowCards">
+        <button class="workflow-card active" type="button" data-filter-kind="all" data-filter-value="">
+          <span class="workflow-label">Toutes les vidéos</span>
+          <strong id="workflowAll">—</strong>
+        </button>
+        <button class="workflow-card" type="button" data-filter-kind="asset_type" data-filter-value="raw">
+          <span class="workflow-label">Vidéos brutes</span>
+          <strong id="workflowRaw">—</strong>
+        </button>
+        <button class="workflow-card" type="button" data-filter-kind="asset_type" data-filter-value="cut">
+          <span class="workflow-label">Vidéos découpées</span>
+          <strong id="workflowCut">—</strong>
+          <small id="workflowCutLinked">— associées</small>
+        </button>
+        <button class="workflow-card" type="button" data-filter-kind="workflow_stage" data-filter-value="digitized">
+          <span class="workflow-label">Numérisées</span>
+          <strong id="workflowDigitized">—</strong>
+        </button>
+        <button class="workflow-card" type="button" data-filter-kind="workflow_stage" data-filter-value="to_review">
+          <span class="workflow-label">À visionner</span>
+          <strong id="workflowToReview">—</strong>
+        </button>
+        <button class="workflow-card" type="button" data-filter-kind="workflow_stage" data-filter-value="transcribed">
+          <span class="workflow-label">Transcrites</span>
+          <strong id="workflowTranscribed">—</strong>
+        </button>
+        <button class="workflow-card" type="button" data-filter-kind="workflow_stage" data-filter-value="ready_edit">
+          <span class="workflow-label">Prêtes montage</span>
+          <strong id="workflowReadyEdit">—</strong>
+        </button>
+        <button class="workflow-card" type="button" data-filter-kind="workflow_stage" data-filter-value="published">
+          <span class="workflow-label">Publiées</span>
+          <strong id="workflowPublished">—</strong>
+        </button>
+      </div>
+    </section>
+
     <section class="toolbar">
       <div class="search-box">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 3a7.5 7.5 0 1 1 0 15 7.5 7.5 0 0 1 0-15Zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11Zm8.03 13.47-3.2-3.2 1.42-1.42 3.2 3.2-1.42 1.42Z"/></svg>
-        <input id="searchInput" type="search" placeholder="Search by name, folder, owner..." autocomplete="off">
+        <input id="searchInput" type="search" placeholder="Rechercher par nom, dossier, label, thème..." autocomplete="off">
       </div>
       <div class="toolbar-actions">
         <select id="sortBy">
@@ -52,6 +95,34 @@
     <div class="layout">
       <aside class="filters">
         <h2>Filters</h2>
+
+        <label>
+          Type de fichier
+          <select id="assetTypeFilter">
+            <option value="">Tous les types</option>
+            <option value="raw">Vidéo brute</option>
+            <option value="cut">Vidéo découpée</option>
+          </select>
+        </label>
+
+        <label>
+          Étape de production
+          <select id="workflowStageFilter">
+            <option value="">Toutes les étapes</option>
+            <option value="digitized">Numérisée</option>
+            <option value="to_review">À visionner</option>
+            <option value="transcribed">Transcrite</option>
+            <option value="ready_edit">Prête montage</option>
+            <option value="published">Publiée</option>
+          </select>
+        </label>
+
+        <label>
+          Label
+          <select id="labelFilter">
+            <option value="">Tous les labels</option>
+          </select>
+        </label>
 
         <label>
           Folder
@@ -122,6 +193,7 @@
               <tr>
                 <th>Name</th>
                 <th>Folder</th>
+                <th>Production</th>
                 <th>Format</th>
                 <th>Resolution</th>
                 <th>Duration</th>
@@ -131,7 +203,7 @@
               </tr>
             </thead>
             <tbody id="resultsBody">
-              <tr><td colspan="8" class="empty">Loading...</td></tr>
+              <tr><td colspan="9" class="empty">Loading...</td></tr>
             </tbody>
           </table>
         </div>
@@ -154,6 +226,6 @@
     </form>
   </dialog>
 
-  <script src="/static/app.js?v=christian-metadata-1"></script>
+  <script src="/static/app.js?v=labels-2"></script>
 </body>
 </html>

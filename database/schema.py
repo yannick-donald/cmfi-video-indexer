@@ -131,6 +131,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
         ("keywords", "TEXT"),
         ("semantic_tags", "TEXT"),
         ("normalized_name", "TEXT"),
+        ("asset_type", "TEXT DEFAULT 'raw'"),
+        ("workflow_stage", "TEXT DEFAULT 'digitized'"),
+        ("source_file_id", "TEXT"),
+        ("workflow_notes", "TEXT"),
+        ("workflow_updated_at", "TEXT"),
     ]:
         _add_column_if_missing(conn, "videos", col, sql_type)
 
@@ -140,6 +145,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_main_theme ON videos(main_theme)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_content_type ON videos(content_type)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_event_name ON videos(event_name)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_asset_type ON videos(asset_type)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_workflow_stage ON videos(workflow_stage)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_source_file_id ON videos(source_file_id)")
+    conn.execute("UPDATE videos SET asset_type = 'raw' WHERE asset_type IS NULL OR asset_type = ''")
+    conn.execute(
+        "UPDATE videos SET workflow_stage = 'digitized' "
+        "WHERE workflow_stage IS NULL OR workflow_stage = ''"
+    )
 
     # 3) Christian lexicon and per-video term assignments.
     # Categories can include theme, doctrine, scripture, song, person, place,
@@ -181,7 +194,35 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_video_lexicon_file_id ON video_lexicon_terms(file_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_video_lexicon_term_id ON video_lexicon_terms(term_id)")
 
-    # 4) Full-text search index (FTS5) for enriched fields
+    # 4) Reusable manual labels assigned by users.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS labels (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            normalized_name TEXT NOT NULL UNIQUE,
+            color TEXT DEFAULT '',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_labels_name ON labels(name COLLATE NOCASE)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS video_labels (
+            file_id TEXT NOT NULL,
+            label_id INTEGER NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(file_id, label_id),
+            FOREIGN KEY(file_id) REFERENCES videos(file_id) ON DELETE CASCADE,
+            FOREIGN KEY(label_id) REFERENCES labels(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_video_labels_file_id ON video_labels(file_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_video_labels_label_id ON video_labels(label_id)")
+
+    # 5) Full-text search index (FTS5) for enriched fields
     # Note: this is a standalone FTS table; we keep it synced from code on upsert.
     fts_sql = """
         CREATE VIRTUAL TABLE IF NOT EXISTS videos_fts USING fts5(

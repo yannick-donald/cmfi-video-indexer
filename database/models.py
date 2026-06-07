@@ -52,6 +52,11 @@ class VideoRecord:
     metadata_updated_at: str = ""
     keywords: str = ""
     semantic_tags: str = ""
+    asset_type: str = "raw"
+    workflow_stage: str = "digitized"
+    source_file_id: str = ""
+    workflow_notes: str = ""
+    workflow_updated_at: str = ""
     duration_seconds: float | None = None
     width: int | None = None
     height: int | None = None
@@ -118,6 +123,11 @@ class VideoRecord:
             metadata_updated_at=row["metadata_updated_at"] or "",
             keywords=row["keywords"] or "",
             semantic_tags=row["semantic_tags"] or "",
+            asset_type=row["asset_type"] or "raw",
+            workflow_stage=row["workflow_stage"] or "digitized",
+            source_file_id=row["source_file_id"] or "",
+            workflow_notes=row["workflow_notes"] or "",
+            workflow_updated_at=row["workflow_updated_at"] or "",
             duration_seconds=row["duration_seconds"],
             width=row["width"],
             height=row["height"],
@@ -184,6 +194,11 @@ class VideoRecord:
             "metadata_updated_at": self.metadata_updated_at,
             "keywords": self.keywords,
             "semantic_tags": self.semantic_tags,
+            "asset_type": self.asset_type,
+            "workflow_stage": self.workflow_stage,
+            "source_file_id": self.source_file_id,
+            "workflow_notes": self.workflow_notes,
+            "workflow_updated_at": self.workflow_updated_at,
             "duration_seconds": self.duration_seconds,
             "width": self.width,
             "height": self.height,

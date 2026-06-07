@@ -17,6 +17,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   background:
@@ -58,6 +62,70 @@ h1 {
   display: grid;
   grid-template-columns: repeat(3, minmax(110px, 1fr));
   gap: 12px;
+}
+
+.view-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.view-tab {
+  border: 0;
+  border-radius: 6px;
+  padding: 9px 14px;
+  color: var(--muted);
+  background: transparent;
+}
+
+.view-tab.active {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.production-overview {
+  margin-bottom: 20px;
+}
+
+.workflow-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.workflow-card {
+  display: grid;
+  min-height: 94px;
+  align-content: space-between;
+  gap: 4px;
+  padding: 14px;
+  text-align: left;
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.workflow-card:hover,
+.workflow-card.active {
+  border-color: var(--success);
+}
+
+.workflow-card.active {
+  box-shadow: inset 3px 0 0 var(--success), var(--shadow);
+}
+
+.workflow-label,
+.workflow-card small {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.workflow-card strong {
+  font-size: 1.6rem;
 }
 
 .stat {
@@ -243,7 +311,22 @@ button:hover {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 900px;
+  min-width: 1280px;
+}
+
+thead th:nth-child(1),
+tbody td:nth-child(1) {
+  min-width: 300px;
+}
+
+thead th:nth-child(2),
+tbody td:nth-child(2) {
+  min-width: 280px;
+}
+
+thead th:nth-child(3),
+tbody td:nth-child(3) {
+  min-width: 130px;
 }
 
 thead th {
@@ -287,6 +370,54 @@ tbody tr:hover {
   padding: 0;
 }
 
+.status-badge {
+  display: block;
+  width: fit-content;
+  margin-bottom: 5px;
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  background: var(--panel-2);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.video-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.video-label {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 3px 7px;
+  border: 1px solid #425466;
+  border-radius: 999px;
+  color: #b9d7ff;
+  background: #1b2a3a;
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.asset-raw {
+  color: #e7c86f;
+}
+
+.asset-cut {
+  color: #7ed8c4;
+}
+
+.stage-published {
+  color: var(--success);
+}
+
+.stage-to_review {
+  color: #f4a261;
+}
+
 .empty {
   text-align: center;
   color: var(--muted);
@@ -307,6 +438,7 @@ dialog {
   color: var(--text);
   width: min(980px, calc(100vw - 32px));
   max-height: calc(100vh - 48px);
+  overflow: auto;
   box-shadow: var(--shadow);
 }
 
@@ -331,6 +463,45 @@ dialog article {
   margin-top: 18px;
   padding-top: 18px;
   border-top: 1px solid var(--border);
+}
+
+.workflow-editor {
+  margin-top: 18px;
+  padding: 18px 0;
+  border-top: 1px solid var(--border);
+}
+
+.label-editor {
+  margin-top: 18px;
+  padding: 18px 0;
+  border-top: 1px solid var(--border);
+}
+
+.label-editor input {
+  width: 100%;
+}
+
+.workflow-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.related-videos {
+  margin-top: 14px;
+}
+
+.related-videos h4 {
+  margin: 0 0 8px;
+}
+
+.related-video-btn {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 9px 10px;
+  border-radius: 6px;
+  text-align: left;
 }
 
 .metadata-header {
@@ -421,6 +592,20 @@ dialog article {
   }
 
   .metadata-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workflow-editor-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .workflow-cards {
     grid-template-columns: 1fr;
   }
 }

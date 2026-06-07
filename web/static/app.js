@@ -2,6 +2,20 @@ const state = {
   page: 1,
   pageSize: 50,
   debounceTimer: null,
+  view: "production",
+};
+
+const workflowLabels = {
+  digitized: "Numérisée",
+  to_review: "À visionner",
+  transcribed: "Transcrite",
+  ready_edit: "Prête montage",
+  published: "Publiée",
+};
+
+const assetLabels = {
+  raw: "Brute",
+  cut: "Découpée",
 };
 
 const els = {
@@ -15,6 +29,9 @@ const els = {
   yearFilter: document.getElementById("yearFilter"),
   sharedDriveFilter: document.getElementById("sharedDriveFilter"),
   audioFilter: document.getElementById("audioFilter"),
+  assetTypeFilter: document.getElementById("assetTypeFilter"),
+  workflowStageFilter: document.getElementById("workflowStageFilter"),
+  labelFilter: document.getElementById("labelFilter"),
   minSizeFilter: document.getElementById("minSizeFilter"),
   maxSizeFilter: document.getElementById("maxSizeFilter"),
   minDurationFilter: document.getElementById("minDurationFilter"),
@@ -33,6 +50,17 @@ const els = {
   scanFolderInput: document.getElementById("scanFolderInput"),
   scanFolderButton: document.getElementById("scanFolderButton"),
   scanFolderStatus: document.getElementById("scanFolderStatus"),
+  productionOverview: document.getElementById("productionOverview"),
+  workflowCards: document.getElementById("workflowCards"),
+  workflowAll: document.getElementById("workflowAll"),
+  workflowRaw: document.getElementById("workflowRaw"),
+  workflowCut: document.getElementById("workflowCut"),
+  workflowCutLinked: document.getElementById("workflowCutLinked"),
+  workflowDigitized: document.getElementById("workflowDigitized"),
+  workflowToReview: document.getElementById("workflowToReview"),
+  workflowTranscribed: document.getElementById("workflowTranscribed"),
+  workflowReadyEdit: document.getElementById("workflowReadyEdit"),
+  workflowPublished: document.getElementById("workflowPublished"),
 };
 
 function buildQueryParams() {
@@ -51,6 +79,9 @@ function buildQueryParams() {
   add("shared_drive", els.sharedDriveFilter.value);
   add("semantic", els.semanticToggle && els.semanticToggle.checked ? "true" : "");
   add("has_audio", els.audioFilter.value);
+  add("asset_type", els.assetTypeFilter.value);
+  add("workflow_stage", els.workflowStageFilter.value);
+  add("label", els.labelFilter.value);
   add("min_size_mb", els.minSizeFilter.value);
   add("max_size_mb", els.maxSizeFilter.value);
   add("min_duration_sec", els.minDurationFilter.value);
@@ -80,6 +111,22 @@ async function loadStats() {
   els.statDuration.textContent = data.total_duration_human;
 }
 
+async function loadWorkflowStats() {
+  const response = await fetch("/api/workflow/stats");
+  const data = await response.json();
+  const assets = data.assets || {};
+  const stages = data.stages || {};
+  els.workflowAll.textContent = Object.values(assets).reduce((sum, value) => sum + value, 0).toLocaleString();
+  els.workflowRaw.textContent = (assets.raw || 0).toLocaleString();
+  els.workflowCut.textContent = (assets.cut || 0).toLocaleString();
+  els.workflowCutLinked.textContent = `${(data.linked_cuts || 0).toLocaleString()} associée(s)`;
+  els.workflowDigitized.textContent = (stages.digitized || 0).toLocaleString();
+  els.workflowToReview.textContent = (stages.to_review || 0).toLocaleString();
+  els.workflowTranscribed.textContent = (stages.transcribed || 0).toLocaleString();
+  els.workflowReadyEdit.textContent = (stages.ready_edit || 0).toLocaleString();
+  els.workflowPublished.textContent = (stages.published || 0).toLocaleString();
+}
+
 async function loadFilters() {
   const response = await fetch("/api/filters");
   const data = await response.json();
@@ -88,11 +135,20 @@ async function loadFilters() {
   fillSelect(els.resolutionFilter, data.resolutions, "All resolutions");
   fillSelect(els.yearFilter, data.years, "All years");
   fillSelect(els.sharedDriveFilter, data.shared_drives, "All drives");
+  const selectedLabel = els.labelFilter.value;
+  els.labelFilter.innerHTML = `<option value="">Tous les labels</option>`;
+  (data.labels || []).forEach((label) => {
+    const option = document.createElement("option");
+    option.value = label.name;
+    option.textContent = `${label.name} (${label.video_count})`;
+    els.labelFilter.appendChild(option);
+  });
+  els.labelFilter.value = selectedLabel;
 }
 
 function renderRows(items) {
   if (!items.length) {
-    els.resultsBody.innerHTML = `<tr><td colspan="8" class="empty">No videos match your search. Try broader filters.</td></tr>`;
+    els.resultsBody.innerHTML = `<tr><td colspan="9" class="empty">Aucune vidéo ne correspond à ces filtres.</td></tr>`;
     return;
   }
 
@@ -104,8 +160,13 @@ function renderRows(items) {
           <div class="file-name">${escapeHtml(item.editorial_title || item.clean_title || item.file_name)}</div>
           ${item.editorial_title || item.clean_title ? `<div class="folder-path">${escapeHtml(item.file_name)}</div>` : ""}
           <div class="folder-path">${escapeHtml(item.owner || "Unknown owner")}</div>
+          ${renderLabelBadges(item.labels || [])}
         </td>
         <td><div class="folder-path">${escapeHtml(item.folder_path || "—")}</div></td>
+        <td>
+          <span class="status-badge asset-${escapeHtml(item.asset_type)}">${escapeHtml(assetLabels[item.asset_type] || item.asset_type)}</span>
+          <span class="status-badge stage-${escapeHtml(item.workflow_stage)}">${escapeHtml(workflowLabels[item.workflow_stage] || item.workflow_stage)}</span>
+        </td>
         <td>${escapeHtml(item.file_extension || "—")}</td>
         <td>
           <div>${escapeHtml(item.resolution || "—")}</div>
@@ -166,9 +227,153 @@ async function showDetails(fileId) {
         <div>${typeof value === "string" && value.startsWith("<a") ? value : escapeHtml(String(value))}</div>
       </div>`
     )
-    .join("") + renderChristianMetadataEditor(item);
+    .join("") + renderLabelEditor(item) + await renderWorkflowEditor(item) + renderChristianMetadataEditor(item);
 
   els.detailDialog.showModal();
+}
+
+function renderLabelBadges(labels) {
+  if (!labels.length) return "";
+  return `<div class="video-labels">${renderLabelChips(labels)}</div>`;
+}
+
+function renderLabelChips(labels) {
+  return labels.map((label) => `<span class="video-label">${escapeHtml(label.name)}</span>`).join("");
+}
+
+function renderLabelEditor(item) {
+  const value = (item.labels || []).map((label) => label.name).join("; ");
+  return `
+    <section class="label-editor">
+      <div class="metadata-header">
+        <h3>Labels manuels</h3>
+        <button id="saveLabelsButton" type="button">Enregistrer les labels</button>
+      </div>
+      <p class="metadata-hint">Ajoute plusieurs labels séparés par des points-virgules.</p>
+      <label class="metadata-field">
+        <span>Labels</span>
+        <input id="videoLabelsInput" type="text" value="${escapeAttr(value)}" placeholder="prioritaire; audio à nettoyer; chant">
+      </label>
+      <div id="videoLabelPreview" class="video-labels">${renderLabelChips(item.labels || [])}</div>
+      <p id="labelsSaveStatus" class="filters-status"></p>
+    </section>`;
+}
+
+async function saveLabels() {
+  const fileId = els.detailContent.dataset.fileId;
+  const labels = document.getElementById("videoLabelsInput").value
+    .split(";")
+    .map((label) => label.trim())
+    .filter(Boolean);
+  const status = document.getElementById("labelsSaveStatus");
+  const button = document.getElementById("saveLabelsButton");
+  status.textContent = "Enregistrement...";
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/videos/${fileId}/labels`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ labels }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    document.getElementById("videoLabelPreview").innerHTML = renderLabelChips(data.labels);
+    status.textContent = "Labels enregistrés.";
+    await Promise.all([loadVideos(), loadFilters()]);
+  } catch (error) {
+    status.textContent = `Échec : ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function renderWorkflowEditor(item) {
+  const response = await fetch(`/api/workflow/raw-videos?exclude_file_id=${encodeURIComponent(item.file_id)}`);
+  const data = await response.json();
+  const sourceOptions = (data.items || [])
+    .map((source) => `
+      <option value="${escapeAttr(source.file_id)}" ${source.file_id === item.source_file_id ? "selected" : ""}>
+        ${escapeHtml(source.label)} · ${escapeHtml(source.folder_path)}
+      </option>`)
+    .join("");
+  const related = item.related_videos || {};
+  const sourceLink = related.source
+    ? `<button class="related-video-btn" type="button" data-related-id="${escapeAttr(related.source.file_id)}">Source : ${escapeHtml(related.source.editorial_title || related.source.file_name)}</button>`
+    : "";
+  const cutLinks = (related.cuts || [])
+    .map((cut) => `<button class="related-video-btn" type="button" data-related-id="${escapeAttr(cut.file_id)}">${escapeHtml(cut.editorial_title || cut.file_name)}</button>`)
+    .join("");
+
+  return `
+    <section class="workflow-editor">
+      <div class="metadata-header">
+        <h3>Suivi de production</h3>
+        <button id="saveWorkflowButton" type="button">Enregistrer le suivi</button>
+      </div>
+      <div class="workflow-editor-grid">
+        <label class="metadata-field">
+          <span>Type de fichier</span>
+          <select id="workflowAssetType">
+            <option value="raw" ${item.asset_type === "raw" ? "selected" : ""}>Vidéo brute</option>
+            <option value="cut" ${item.asset_type === "cut" ? "selected" : ""}>Vidéo découpée</option>
+          </select>
+        </label>
+        <label class="metadata-field">
+          <span>Étape actuelle</span>
+          <select id="workflowStage">
+            ${Object.entries(workflowLabels).map(([value, label]) => `<option value="${value}" ${item.workflow_stage === value ? "selected" : ""}>${label}</option>`).join("")}
+          </select>
+        </label>
+        <label class="metadata-field metadata-field-wide" id="sourceVideoField" ${item.asset_type !== "cut" ? "hidden" : ""}>
+          <span>Vidéo brute source</span>
+          <select id="workflowSourceFile">
+            <option value="">Aucune source associée</option>
+            ${sourceOptions}
+          </select>
+        </label>
+        <label class="metadata-field metadata-field-wide">
+          <span>Notes de suivi</span>
+          <textarea id="workflowNotes" rows="3">${escapeHtml(item.workflow_notes || "")}</textarea>
+        </label>
+      </div>
+      ${(sourceLink || cutLinks) ? `<div class="related-videos"><h4>Fichiers associés</h4>${sourceLink}${cutLinks}</div>` : ""}
+      <p id="workflowSaveStatus" class="filters-status"></p>
+    </section>`;
+}
+
+async function saveWorkflow() {
+  const fileId = els.detailContent.dataset.fileId;
+  const assetType = document.getElementById("workflowAssetType").value;
+  const payload = {
+    asset_type: assetType,
+    workflow_stage: document.getElementById("workflowStage").value,
+    source_file_id: assetType === "cut" ? document.getElementById("workflowSourceFile").value : "",
+    workflow_notes: document.getElementById("workflowNotes").value,
+  };
+  const status = document.getElementById("workflowSaveStatus");
+  const button = document.getElementById("saveWorkflowButton");
+  status.textContent = "Enregistrement...";
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/videos/${fileId}/workflow`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${response.status}`);
+    }
+    status.textContent = "Suivi enregistré.";
+    await Promise.all([loadVideos(), loadStats(), loadWorkflowStats()]);
+  } catch (error) {
+    status.textContent = `Échec : ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 const metadataFields = [
@@ -318,6 +523,9 @@ function resetFilters() {
     els.yearFilter,
     els.sharedDriveFilter,
     els.audioFilter,
+    els.assetTypeFilter,
+    els.workflowStageFilter,
+    els.labelFilter,
   ].forEach((select) => {
     select.value = "";
   });
@@ -326,8 +534,26 @@ function resetFilters() {
   });
   els.sortBy.value = "file_name";
   els.sortDir.value = "asc";
+  document.querySelectorAll(".workflow-card").forEach((card) => {
+    card.classList.toggle("active", card.dataset.filterKind === "all");
+  });
   state.page = 1;
   loadVideos();
+}
+
+function syncWorkflowCardSelection() {
+  document.querySelectorAll(".workflow-card").forEach((card) => {
+    const matchesAsset = card.dataset.filterKind === "asset_type"
+      && card.dataset.filterValue === els.assetTypeFilter.value
+      && !els.workflowStageFilter.value;
+    const matchesStage = card.dataset.filterKind === "workflow_stage"
+      && card.dataset.filterValue === els.workflowStageFilter.value
+      && !els.assetTypeFilter.value;
+    const matchesAll = card.dataset.filterKind === "all"
+      && !els.assetTypeFilter.value
+      && !els.workflowStageFilter.value;
+    card.classList.toggle("active", matchesAsset || matchesStage || matchesAll);
+  });
 }
 
 [
@@ -340,6 +566,9 @@ function resetFilters() {
   els.yearFilter,
   els.sharedDriveFilter,
   els.audioFilter,
+  els.assetTypeFilter,
+  els.workflowStageFilter,
+  els.labelFilter,
   els.minSizeFilter,
   els.maxSizeFilter,
   els.minDurationFilter,
@@ -349,6 +578,28 @@ function resetFilters() {
   if (!element) return;
   element.addEventListener("input", scheduleSearch);
   element.addEventListener("change", scheduleSearch);
+});
+
+els.assetTypeFilter.addEventListener("change", syncWorkflowCardSelection);
+els.workflowStageFilter.addEventListener("change", syncWorkflowCardSelection);
+
+document.querySelectorAll(".view-tab").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.view = button.dataset.view;
+    document.querySelectorAll(".view-tab").forEach((tab) => tab.classList.toggle("active", tab === button));
+    els.productionOverview.hidden = state.view !== "production";
+  });
+});
+
+els.workflowCards.addEventListener("click", (event) => {
+  const card = event.target.closest(".workflow-card");
+  if (!card) return;
+  const kind = card.dataset.filterKind;
+  els.assetTypeFilter.value = kind === "asset_type" ? card.dataset.filterValue : "";
+  els.workflowStageFilter.value = kind === "workflow_stage" ? card.dataset.filterValue : "";
+  document.querySelectorAll(".workflow-card").forEach((item) => item.classList.toggle("active", item === card));
+  state.page = 1;
+  loadVideos();
 });
 
 els.resetFilters.addEventListener("click", resetFilters);
@@ -376,6 +627,21 @@ els.detailContent.addEventListener("click", (event) => {
   if (!(target instanceof HTMLElement)) return;
   if (target.id === "saveMetadataButton") {
     saveMetadata();
+  }
+  if (target.id === "saveWorkflowButton") {
+    saveWorkflow();
+  }
+  if (target.id === "saveLabelsButton") {
+    saveLabels();
+  }
+  if (target.classList.contains("related-video-btn")) {
+    showDetails(target.dataset.relatedId);
+  }
+});
+
+els.detailContent.addEventListener("change", (event) => {
+  if (event.target.id === "workflowAssetType") {
+    document.getElementById("sourceVideoField").hidden = event.target.value !== "cut";
   }
 });
 
@@ -413,7 +679,7 @@ if (els.scanFolderButton) {
 }
 
 async function init() {
-  await Promise.all([loadStats(), loadFilters(), loadVideos()]);
+  await Promise.all([loadStats(), loadWorkflowStats(), loadFilters(), loadVideos()]);
 }
 
 init();

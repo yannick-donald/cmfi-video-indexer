@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +23,12 @@ SORT_COLUMNS = {
     "main_theme": "main_theme COLLATE NOCASE",
     "content_type": "content_type COLLATE NOCASE",
     "event_name": "event_name COLLATE NOCASE",
+    "asset_type": "asset_type COLLATE NOCASE",
+    "workflow_stage": "workflow_stage COLLATE NOCASE",
 }
+
+ASSET_TYPES = {"raw", "cut"}
+WORKFLOW_STAGES = {"digitized", "to_review", "transcribed", "ready_edit", "published"}
 
 CHRISTIAN_METADATA_FIELDS = {
     "editorial_title",
@@ -75,6 +80,9 @@ class SearchFilters:
     max_duration_sec: float | None = None
     has_audio: bool | None = None
     shared_drive: str = ""
+    asset_type: str = ""
+    workflow_stage: str = ""
+    label: str = ""
 
 
 @dataclass(slots=True)
@@ -229,6 +237,197 @@ class VideoRepository:
             conn.commit()
             return VideoRecord.from_row(updated)
 
+    def update_workflow(self, file_id: str, workflow: dict[str, Any]) -> VideoRecord | None:
+        asset_type = str(workflow.get("asset_type") or "raw").strip()
+        workflow_stage = str(workflow.get("workflow_stage") or "digitized").strip()
+        source_file_id = str(workflow.get("source_file_id") or "").strip()
+        workflow_notes = str(workflow.get("workflow_notes") or "").strip()
+
+        if asset_type not in ASSET_TYPES:
+            raise ValueError("Invalid asset type")
+        if workflow_stage not in WORKFLOW_STAGES:
+            raise ValueError("Invalid workflow stage")
+        if asset_type == "raw":
+            source_file_id = ""
+        if source_file_id == file_id:
+            raise ValueError("A video cannot be its own source")
+
+        with self._connect() as conn:
+            if not conn.execute("SELECT 1 FROM videos WHERE file_id = ?", (file_id,)).fetchone():
+                return None
+            if source_file_id:
+                source = conn.execute(
+                    "SELECT asset_type FROM videos WHERE file_id = ?",
+                    (source_file_id,),
+                ).fetchone()
+                if not source or source["asset_type"] != "raw":
+                    raise ValueError("Source video must be an existing raw video")
+            conn.execute(
+                """
+                UPDATE videos
+                SET asset_type = ?, workflow_stage = ?, source_file_id = ?,
+                    workflow_notes = ?, workflow_updated_at = datetime('now')
+                WHERE file_id = ?
+                """,
+                (asset_type, workflow_stage, source_file_id, workflow_notes, file_id),
+            )
+            row = conn.execute("SELECT * FROM videos WHERE file_id = ?", (file_id,)).fetchone()
+            conn.commit()
+        return VideoRecord.from_row(row) if row else None
+
+    def get_workflow_stats(self) -> dict[str, Any]:
+        with self._connect() as conn:
+            asset_rows = conn.execute(
+                "SELECT asset_type, COUNT(*) AS count FROM videos GROUP BY asset_type"
+            ).fetchall()
+            stage_rows = conn.execute(
+                "SELECT workflow_stage, COUNT(*) AS count FROM videos GROUP BY workflow_stage"
+            ).fetchall()
+            linked_cuts = conn.execute(
+                """
+                SELECT COUNT(*) FROM videos
+                WHERE asset_type = 'cut' AND source_file_id IS NOT NULL AND source_file_id != ''
+                """
+            ).fetchone()[0]
+            unlinked_cuts = conn.execute(
+                """
+                SELECT COUNT(*) FROM videos
+                WHERE asset_type = 'cut' AND (source_file_id IS NULL OR source_file_id = '')
+                """
+            ).fetchone()[0]
+        return {
+            "assets": {row["asset_type"]: row["count"] for row in asset_rows},
+            "stages": {row["workflow_stage"]: row["count"] for row in stage_rows},
+            "linked_cuts": linked_cuts,
+            "unlinked_cuts": unlinked_cuts,
+        }
+
+    def get_raw_video_options(self, exclude_file_id: str = "") -> list[dict[str, str]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT file_id, file_name, editorial_title, folder_path
+                FROM videos
+                WHERE asset_type = 'raw' AND file_id != ?
+                ORDER BY COALESCE(NULLIF(editorial_title, ''), file_name) COLLATE NOCASE
+                """,
+                (exclude_file_id,),
+            ).fetchall()
+        return [
+            {
+                "file_id": row["file_id"],
+                "label": row["editorial_title"] or row["file_name"],
+                "folder_path": row["folder_path"] or "",
+            }
+            for row in rows
+        ]
+
+    def get_related_videos(self, file_id: str) -> dict[str, Any]:
+        with self._connect() as conn:
+            current = conn.execute(
+                "SELECT source_file_id, asset_type FROM videos WHERE file_id = ?",
+                (file_id,),
+            ).fetchone()
+            if not current:
+                return {"source": None, "cuts": []}
+            source = None
+            if current["source_file_id"]:
+                source = conn.execute(
+                    "SELECT * FROM videos WHERE file_id = ?",
+                    (current["source_file_id"],),
+                ).fetchone()
+            cuts = conn.execute(
+                "SELECT * FROM videos WHERE source_file_id = ? ORDER BY file_name COLLATE NOCASE",
+                (file_id,),
+            ).fetchall()
+        return {
+            "source": VideoRecord.from_row(source).to_dict() if source else None,
+            "cuts": [VideoRecord.from_row(row).to_dict() for row in cuts],
+        }
+
+    def get_video_labels(self, file_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT l.id, l.name, l.color
+                FROM video_labels vl
+                JOIN labels l ON l.id = vl.label_id
+                WHERE vl.file_id = ?
+                ORDER BY l.name COLLATE NOCASE
+                """,
+                (file_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_all_labels(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT l.id, l.name, l.color, COUNT(vl.file_id) AS video_count
+                FROM labels l
+                LEFT JOIN video_labels vl ON vl.label_id = l.id
+                GROUP BY l.id
+                ORDER BY l.name COLLATE NOCASE
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def set_video_labels(self, file_id: str, names: list[str]) -> list[dict[str, Any]] | None:
+        clean_names: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for raw_name in names:
+            name = " ".join(str(raw_name).strip().split())
+            normalized = name.casefold()
+            if not name or normalized in seen:
+                continue
+            seen.add(normalized)
+            clean_names.append((name, normalized))
+
+        with self._connect() as conn:
+            if not conn.execute("SELECT 1 FROM videos WHERE file_id = ?", (file_id,)).fetchone():
+                return None
+            conn.execute("DELETE FROM video_labels WHERE file_id = ?", (file_id,))
+            for name, normalized in clean_names:
+                conn.execute(
+                    "INSERT OR IGNORE INTO labels(name, normalized_name) VALUES(?, ?)",
+                    (name, normalized),
+                )
+                label_id = conn.execute(
+                    "SELECT id FROM labels WHERE normalized_name = ?",
+                    (normalized,),
+                ).fetchone()[0]
+                conn.execute(
+                    "INSERT OR IGNORE INTO video_labels(file_id, label_id) VALUES(?, ?)",
+                    (file_id, label_id),
+                )
+            conn.execute(
+                "DELETE FROM labels WHERE id NOT IN (SELECT DISTINCT label_id FROM video_labels)"
+            )
+            conn.commit()
+        return self.get_video_labels(file_id)
+
+    def get_labels_map(self, file_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        if not file_ids:
+            return {}
+        placeholders = ",".join("?" for _ in file_ids)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT vl.file_id, l.id, l.name, l.color
+                FROM video_labels vl
+                JOIN labels l ON l.id = vl.label_id
+                WHERE vl.file_id IN ({placeholders})
+                ORDER BY l.name COLLATE NOCASE
+                """,
+                file_ids,
+            ).fetchall()
+        result: dict[str, list[dict[str, Any]]] = {file_id: [] for file_id in file_ids}
+        for row in rows:
+            result[row["file_id"]].append(
+                {"id": row["id"], "name": row["name"], "color": row["color"]}
+            )
+        return result
+
     def get_video_lexicon_terms(self, file_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -364,12 +563,12 @@ class VideoRepository:
         direction = "DESC" if sort_dir.lower() == "desc" else "ASC"
 
         # Use FTS for the query, and keep the rest of filters as normal WHERE clauses.
-        where, params = self._build_where(SearchFilters(**{**filters.__dict__, "query": ""}))
+        where, params = self._build_where(SearchFilters(**{**asdict(filters), "query": ""}))
         where_prefix = f"{where} AND" if where else "WHERE"
 
         count_sql = f"""
             SELECT COUNT(*) FROM videos
-            WHERE file_id IN (SELECT file_id FROM videos_fts WHERE videos_fts MATCH ?)
+            {where_prefix} file_id IN (SELECT file_id FROM videos_fts WHERE videos_fts MATCH ?)
         """
 
         data_sql = f"""
@@ -380,7 +579,7 @@ class VideoRepository:
         """
 
         with self._connect() as conn:
-            total = conn.execute(count_sql, (query,)).fetchone()[0]
+            total = conn.execute(count_sql, [*params, query]).fetchone()[0]
             rows = conn.execute(data_sql, [*params, query, page_size, offset]).fetchall()
 
         total_pages = max((total + page_size - 1) // page_size, 1)
@@ -562,10 +761,16 @@ class VideoRepository:
                     OR transcript_summary LIKE ?
                     OR keywords LIKE ?
                     OR semantic_tags LIKE ?
+                    OR file_id IN (
+                        SELECT vl.file_id
+                        FROM video_labels vl
+                        JOIN labels l ON l.id = vl.label_id
+                        WHERE l.name LIKE ?
+                    )
                 )
                 """
             )
-            params.extend([q] * 22)
+            params.extend([q] * 23)
 
         if filters.folder:
             clauses.append("folder_path = ?")
@@ -586,6 +791,27 @@ class VideoRepository:
         if filters.shared_drive:
             clauses.append("shared_drive_name = ?")
             params.append(filters.shared_drive)
+
+        if filters.asset_type:
+            clauses.append("asset_type = ?")
+            params.append(filters.asset_type)
+
+        if filters.workflow_stage:
+            clauses.append("workflow_stage = ?")
+            params.append(filters.workflow_stage)
+
+        if filters.label:
+            clauses.append(
+                """
+                file_id IN (
+                    SELECT vl.file_id
+                    FROM video_labels vl
+                    JOIN labels l ON l.id = vl.label_id
+                    WHERE l.normalized_name = ?
+                )
+                """
+            )
+            params.append(filters.label.casefold())
 
         if filters.min_size_mb is not None:
             clauses.append("file_size >= ?")

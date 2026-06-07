@@ -47,8 +47,19 @@ def create_app(settings: Settings) -> FastAPI:
         }
 
     @app.get("/api/filters")
-    async def filters() -> dict[str, list[str]]:
-        return repo.get_filter_options()
+    async def filters() -> dict[str, Any]:
+        return {
+            **repo.get_filter_options(),
+            "labels": repo.get_all_labels(),
+        }
+
+    @app.get("/api/workflow/stats")
+    async def workflow_stats() -> dict[str, Any]:
+        return repo.get_workflow_stats()
+
+    @app.get("/api/workflow/raw-videos")
+    async def raw_video_options(exclude_file_id: str = Query(default="")) -> dict[str, Any]:
+        return {"items": repo.get_raw_video_options(exclude_file_id)}
 
     @app.post("/api/scan-folder")
     async def scan_folder(payload: dict[str, Any]) -> JSONResponse:
@@ -85,6 +96,9 @@ def create_app(settings: Settings) -> FastAPI:
         min_duration_sec: float | None = Query(default=None),
         max_duration_sec: float | None = Query(default=None),
         has_audio: bool | None = Query(default=None),
+        asset_type: str = Query(default=""),
+        workflow_stage: str = Query(default=""),
+        label: str = Query(default=""),
         sort_by: str = Query(default="file_name"),
         sort_dir: str = Query(default="asc"),
         page: int = Query(default=1, ge=1),
@@ -105,6 +119,8 @@ def create_app(settings: Settings) -> FastAPI:
             "main_theme",
             "content_type",
             "event_name",
+            "asset_type",
+            "workflow_stage",
         }:
             raise HTTPException(status_code=400, detail="Invalid sort column")
 
@@ -121,6 +137,9 @@ def create_app(settings: Settings) -> FastAPI:
                 min_duration_sec=min_duration_sec,
                 max_duration_sec=max_duration_sec,
                 has_audio=has_audio,
+                asset_type=asset_type,
+                workflow_stage=workflow_stage,
+                label=label,
             ),
             sort_by=sort_by,
             sort_dir=sort_dir,
@@ -129,6 +148,7 @@ def create_app(settings: Settings) -> FastAPI:
             use_fts=semantic,
         )
 
+        labels_map = repo.get_labels_map([item.file_id for item in result.items])
         return {
             "total": result.total,
             "page": result.page,
@@ -139,6 +159,7 @@ def create_app(settings: Settings) -> FastAPI:
                     **item.to_dict(),
                     "file_size_human": format_bytes(item.file_size),
                     "duration_human": format_duration(item.duration_seconds),
+                    "labels": labels_map.get(item.file_id, []),
                 }
                 for item in result.items
             ],
@@ -153,6 +174,8 @@ def create_app(settings: Settings) -> FastAPI:
         payload["file_size_human"] = format_bytes(item.file_size)
         payload["duration_human"] = format_duration(item.duration_seconds)
         payload["lexicon_terms"] = repo.get_video_lexicon_terms(file_id)
+        payload["related_videos"] = repo.get_related_videos(file_id)
+        payload["labels"] = repo.get_video_labels(file_id)
         return payload
 
     @app.put("/api/videos/{file_id}/metadata")
@@ -165,6 +188,30 @@ def create_app(settings: Settings) -> FastAPI:
         data["duration_human"] = format_duration(item.duration_seconds)
         data["lexicon_terms"] = repo.get_video_lexicon_terms(file_id)
         return data
+
+    @app.put("/api/videos/{file_id}/workflow")
+    async def update_video_workflow(file_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            item = repo.update_workflow(file_id, payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not item:
+            raise HTTPException(status_code=404, detail="Video not found")
+        data = item.to_dict()
+        data["file_size_human"] = format_bytes(item.file_size)
+        data["duration_human"] = format_duration(item.duration_seconds)
+        data["related_videos"] = repo.get_related_videos(file_id)
+        return data
+
+    @app.put("/api/videos/{file_id}/labels")
+    async def update_video_labels(file_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        raw_labels = payload.get("labels", [])
+        if not isinstance(raw_labels, list):
+            raise HTTPException(status_code=400, detail="labels must be a list")
+        labels = repo.set_video_labels(file_id, [str(label) for label in raw_labels])
+        if labels is None:
+            raise HTTPException(status_code=404, detail="Video not found")
+        return {"file_id": file_id, "labels": labels}
 
     return app
 
