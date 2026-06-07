@@ -37,6 +37,133 @@ body {
   padding: 24px;
 }
 
+.demo-notice {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 11px 14px;
+  border: 1px solid #3f6f61;
+  border-radius: 8px;
+  color: var(--text);
+  background: #16332d;
+  font-size: 0.85rem;
+}
+
+.demo-notice span {
+  color: #a9d8cb;
+}
+
+.account-menu {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  min-width: 190px;
+}
+
+.account-menu span {
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.account-menu small {
+  color: var(--success);
+}
+
+.auth-page {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-shell {
+  width: min(440px, 100%);
+}
+
+.auth-panel {
+  padding: 26px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.auth-panel h1 {
+  margin-bottom: 22px;
+  font-size: 1.65rem;
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 18px;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.auth-tab {
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+}
+
+.auth-tab.active {
+  color: var(--text);
+  background: var(--panel);
+}
+
+.auth-panel form {
+  display: grid;
+  gap: 14px;
+}
+
+.auth-help {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.auth-help strong {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.auth-panel label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.auth-panel input {
+  width: 100%;
+}
+
+.auth-status {
+  min-height: 20px;
+  margin: 0;
+  color: #ff9b9b;
+  font-size: 0.85rem;
+}
+
+.auth-status.success {
+  color: var(--success);
+}
+
+.auth-text-button {
+  padding: 4px;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+}
+
+.auth-text-button:hover {
+  color: var(--text);
+}
+
 .header {
   display: flex;
   justify-content: space-between;
@@ -412,6 +539,10 @@ tbody tr:hover {
 
 .stage-published {
   color: var(--success);
+}
+
+.stage-treated {
+  color: #7ed8c4;
 }
 
 .stage-to_review {

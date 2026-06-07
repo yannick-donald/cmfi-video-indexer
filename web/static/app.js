@@ -5,10 +5,16 @@ const state = {
   view: "production",
 };
 
+const appMode = {
+  publicDemo: document.body.dataset.publicDemo === "true",
+  readOnly: document.body.dataset.readOnly === "true",
+};
+
 const workflowLabels = {
   digitized: "Numérisée",
   to_review: "À visionner",
   transcribed: "Transcrite",
+  treated: "Traitée",
   ready_edit: "Prête montage",
   published: "Publiée",
 };
@@ -59,8 +65,10 @@ const els = {
   workflowDigitized: document.getElementById("workflowDigitized"),
   workflowToReview: document.getElementById("workflowToReview"),
   workflowTranscribed: document.getElementById("workflowTranscribed"),
+  workflowTreated: document.getElementById("workflowTreated"),
   workflowReadyEdit: document.getElementById("workflowReadyEdit"),
   workflowPublished: document.getElementById("workflowPublished"),
+  logoutButton: document.getElementById("logoutButton"),
 };
 
 function buildQueryParams() {
@@ -123,6 +131,7 @@ async function loadWorkflowStats() {
   els.workflowDigitized.textContent = (stages.digitized || 0).toLocaleString();
   els.workflowToReview.textContent = (stages.to_review || 0).toLocaleString();
   els.workflowTranscribed.textContent = (stages.transcribed || 0).toLocaleString();
+  els.workflowTreated.textContent = (stages.treated || 0).toLocaleString();
   els.workflowReadyEdit.textContent = (stages.ready_edit || 0).toLocaleString();
   els.workflowPublished.textContent = (stages.published || 0).toLocaleString();
 }
@@ -247,12 +256,12 @@ function renderLabelEditor(item) {
     <section class="label-editor">
       <div class="metadata-header">
         <h3>Labels manuels</h3>
-        <button id="saveLabelsButton" type="button">Enregistrer les labels</button>
+        ${appMode.readOnly ? "" : '<button id="saveLabelsButton" type="button">Enregistrer les labels</button>'}
       </div>
       <p class="metadata-hint">Ajoute plusieurs labels séparés par des points-virgules.</p>
       <label class="metadata-field">
         <span>Labels</span>
-        <input id="videoLabelsInput" type="text" value="${escapeAttr(value)}" placeholder="prioritaire; audio à nettoyer; chant">
+        <input id="videoLabelsInput" type="text" value="${escapeAttr(value)}" placeholder="prioritaire; audio à nettoyer; chant" ${appMode.readOnly ? "disabled" : ""}>
       </label>
       <div id="videoLabelPreview" class="video-labels">${renderLabelChips(item.labels || [])}</div>
       <p id="labelsSaveStatus" class="filters-status"></p>
@@ -311,32 +320,32 @@ async function renderWorkflowEditor(item) {
     <section class="workflow-editor">
       <div class="metadata-header">
         <h3>Suivi de production</h3>
-        <button id="saveWorkflowButton" type="button">Enregistrer le suivi</button>
+        ${appMode.readOnly ? "" : '<button id="saveWorkflowButton" type="button">Enregistrer le suivi</button>'}
       </div>
       <div class="workflow-editor-grid">
         <label class="metadata-field">
           <span>Type de fichier</span>
-          <select id="workflowAssetType">
+          <select id="workflowAssetType" ${appMode.readOnly ? "disabled" : ""}>
             <option value="raw" ${item.asset_type === "raw" ? "selected" : ""}>Vidéo brute</option>
             <option value="cut" ${item.asset_type === "cut" ? "selected" : ""}>Vidéo découpée</option>
           </select>
         </label>
         <label class="metadata-field">
           <span>Étape actuelle</span>
-          <select id="workflowStage">
+          <select id="workflowStage" ${appMode.readOnly ? "disabled" : ""}>
             ${Object.entries(workflowLabels).map(([value, label]) => `<option value="${value}" ${item.workflow_stage === value ? "selected" : ""}>${label}</option>`).join("")}
           </select>
         </label>
         <label class="metadata-field metadata-field-wide" id="sourceVideoField" ${item.asset_type !== "cut" ? "hidden" : ""}>
           <span>Vidéo brute source</span>
-          <select id="workflowSourceFile">
+          <select id="workflowSourceFile" ${appMode.readOnly ? "disabled" : ""}>
             <option value="">Aucune source associée</option>
             ${sourceOptions}
           </select>
         </label>
         <label class="metadata-field metadata-field-wide">
           <span>Notes de suivi</span>
-          <textarea id="workflowNotes" rows="3">${escapeHtml(item.workflow_notes || "")}</textarea>
+          <textarea id="workflowNotes" rows="3" ${appMode.readOnly ? "disabled" : ""}>${escapeHtml(item.workflow_notes || "")}</textarea>
         </label>
       </div>
       ${(sourceLink || cutLinks) ? `<div class="related-videos"><h4>Fichiers associés</h4>${sourceLink}${cutLinks}</div>` : ""}
@@ -423,13 +432,13 @@ function renderChristianMetadataEditor(item) {
         return `
           <label class="metadata-field metadata-field-wide">
             <span>${escapeHtml(label)}</span>
-            <textarea data-meta="${escapeHtml(key)}" rows="3">${escapeHtml(value)}</textarea>
+            <textarea data-meta="${escapeHtml(key)}" rows="3" ${appMode.readOnly ? "disabled" : ""}>${escapeHtml(value)}</textarea>
           </label>`;
       }
       return `
         <label class="metadata-field">
           <span>${escapeHtml(label)}</span>
-          <input data-meta="${escapeHtml(key)}" type="${type}" ${type === "number" ? 'min="0" max="1" step="0.01"' : ""} value="${escapeAttr(value)}">
+          <input data-meta="${escapeHtml(key)}" type="${type}" ${type === "number" ? 'min="0" max="1" step="0.01"' : ""} value="${escapeAttr(value)}" ${appMode.readOnly ? "disabled" : ""}>
         </label>`;
     })
     .join("");
@@ -438,7 +447,7 @@ function renderChristianMetadataEditor(item) {
     <section class="metadata-editor">
       <div class="metadata-header">
         <h3>Métadonnées chrétiennes</h3>
-        <button id="saveMetadataButton" type="button">Save metadata</button>
+        ${appMode.readOnly ? "" : '<button id="saveMetadataButton" type="button">Save metadata</button>'}
       </div>
       <p class="metadata-hint">Sépare les listes par des points-virgules : foi; repentance; grâce.</p>
       <div class="metadata-grid">${fields}</div>
@@ -674,8 +683,15 @@ async function triggerFolderScan() {
   }
 }
 
-if (els.scanFolderButton) {
+if (els.scanFolderButton && !appMode.readOnly) {
   els.scanFolderButton.addEventListener("click", triggerFolderScan);
+}
+
+if (els.logoutButton) {
+  els.logoutButton.addEventListener("click", async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.href = "/login";
+  });
 }
 
 async function init() {

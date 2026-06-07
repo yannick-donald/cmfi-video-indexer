@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connexion · {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css?v=auth-2">
+</head>
+<body class="auth-page">
+  <main class="auth-shell">
+    <section class="auth-panel">
+      <p class="eyebrow">Dpt DIGITAL · Production vidéo</p>
+      <h1>Accéder à l’espace de travail</h1>
+
+      <div class="auth-tabs">
+        <button id="loginTab" class="auth-tab active" type="button">Connexion</button>
+        {% if allow_registration %}
+        <button id="registerTab" class="auth-tab" type="button">Créer un compte</button>
+        {% endif %}
+      </div>
+
+      <form id="authForm">
+        <label>
+          Adresse e-mail
+          <input id="authEmail" type="email" autocomplete="email" required>
+        </label>
+        <label>
+          Mot de passe
+          <input id="authPassword" type="password" autocomplete="current-password" minlength="8" required>
+        </label>
+        <button id="authSubmit" type="submit">Se connecter</button>
+        <p id="authStatus" class="auth-status" role="alert"></p>
+      </form>
+
+      <form id="verificationForm" hidden>
+        <p class="auth-help">
+          Un code à 6 chiffres a été envoyé à <strong id="verificationEmailLabel"></strong>.
+        </p>
+        <label>
+          Code de vérification
+          <input
+            id="verificationCode"
+            type="text"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            pattern="[0-9]{6}"
+            maxlength="6"
+            required
+          >
+        </label>
+        <button id="verificationSubmit" type="submit">Confirmer mon adresse</button>
+        <button id="resendCode" class="btn-secondary" type="button">Renvoyer le code</button>
+        <button id="backToLogin" class="auth-text-button" type="button">Retour à la connexion</button>
+        <p id="verificationStatus" class="auth-status" role="alert"></p>
+      </form>
+    </section>
+  </main>
+  <script>
+    const allowRegistration = {{ 'true' if allow_registration else 'false' }};
+    let mode = "login";
+    const form = document.getElementById("authForm");
+    const email = document.getElementById("authEmail");
+    const password = document.getElementById("authPassword");
+    const submit = document.getElementById("authSubmit");
+    const status = document.getElementById("authStatus");
+    const loginTab = document.getElementById("loginTab");
+    const registerTab = document.getElementById("registerTab");
+    const verificationForm = document.getElementById("verificationForm");
+    const verificationCode = document.getElementById("verificationCode");
+    const verificationEmailLabel = document.getElementById("verificationEmailLabel");
+    const verificationSubmit = document.getElementById("verificationSubmit");
+    const verificationStatus = document.getElementById("verificationStatus");
+    const resendCode = document.getElementById("resendCode");
+    const backToLogin = document.getElementById("backToLogin");
+    let verificationEmail = "";
+
+    function setMode(nextMode) {
+      mode = nextMode;
+      loginTab.classList.toggle("active", mode === "login");
+      if (registerTab) registerTab.classList.toggle("active", mode === "register");
+      submit.textContent = mode === "login" ? "Se connecter" : "Créer le compte";
+      password.autocomplete = mode === "login" ? "current-password" : "new-password";
+      status.textContent = "";
+      form.hidden = false;
+      verificationForm.hidden = true;
+      document.querySelector(".auth-tabs").hidden = false;
+    }
+
+    function showVerification(targetEmail) {
+      verificationEmail = targetEmail.trim().toLowerCase();
+      verificationEmailLabel.textContent = verificationEmail;
+      form.hidden = true;
+      verificationForm.hidden = false;
+      document.querySelector(".auth-tabs").hidden = true;
+      verificationStatus.textContent = "";
+      verificationCode.value = "";
+      verificationCode.focus();
+    }
+
+    loginTab.addEventListener("click", () => setMode("login"));
+    if (registerTab && allowRegistration) {
+      registerTab.addEventListener("click", () => setMode("register"));
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      status.textContent = "Connexion...";
+      submit.disabled = true;
+      try {
+        const response = await fetch(`/api/auth/${mode}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: email.value, password: password.value }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (data.verification_required) {
+          showVerification(data.email || email.value);
+          return;
+        }
+        if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+        window.location.href = "/";
+      } catch (error) {
+        status.textContent = error.message;
+      } finally {
+        submit.disabled = false;
+      }
+    });
+
+    verificationForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      verificationStatus.textContent = "Vérification...";
+      verificationSubmit.disabled = true;
+      try {
+        const response = await fetch("/api/auth/verify-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: verificationEmail, code: verificationCode.value }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+        window.location.href = "/";
+      } catch (error) {
+        verificationStatus.textContent = error.message;
+      } finally {
+        verificationSubmit.disabled = false;
+      }
+    });
+
+    resendCode.addEventListener("click", async () => {
+      verificationStatus.textContent = "Envoi...";
+      resendCode.disabled = true;
+      try {
+        const response = await fetch("/api/auth/resend-verification", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: verificationEmail }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+        verificationStatus.classList.add("success");
+        verificationStatus.textContent = "Un nouveau code a été envoyé.";
+      } catch (error) {
+        verificationStatus.classList.remove("success");
+        verificationStatus.textContent = error.message;
+      } finally {
+        resendCode.disabled = false;
+      }
+    });
+
+    backToLogin.addEventListener("click", () => setMode("login"));
+  </script>
+</body>
+</html>

@@ -222,7 +222,57 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_video_labels_file_id ON video_labels(file_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_video_labels_label_id ON video_labels(label_id)")
 
-    # 5) Full-text search index (FTS5) for enriched fields
+    # 5) Local users and authenticated browser sessions.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            password_salt TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            last_login_at TEXT
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email COLLATE NOCASE)")
+    user_columns = _table_columns(conn, "users")
+    if "email_verified_at" not in user_columns:
+        conn.execute("ALTER TABLE users ADD COLUMN email_verified_at TEXT")
+        # Accounts created before e-mail verification existed remain usable.
+        conn.execute("UPDATE users SET email_verified_at = CURRENT_TIMESTAMP")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            token_hash TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            expires_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS email_verification_codes (
+            user_id INTEGER PRIMARY KEY,
+            code_hash TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            expires_at TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_email_verification_expires_at "
+        "ON email_verification_codes(expires_at)"
+    )
+
+    # 6) Full-text search index (FTS5) for enriched fields
     # Note: this is a standalone FTS table; we keep it synced from code on upsert.
     fts_sql = """
         CREATE VIRTUAL TABLE IF NOT EXISTS videos_fts USING fts5(

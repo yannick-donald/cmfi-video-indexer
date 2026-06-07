@@ -1,0 +1,66 @@
+services:
+  - type: web
+    name: cmfi-video-indexer
+    runtime: python
+    plan: starter
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn web.server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: APP_NAME
+        value: CMFI Video Production
+      - key: PYTHON_VERSION
+        value: 3.12.13
+      - key: DB_PATH
+        value: /opt/render/project/src/storage/cmfi.sqlite3
+      - key: CACHE_DIR
+        value: /tmp/cmfi-video-indexer/cache
+      - key: OUTPUT_DIR
+        value: /tmp/cmfi-video-indexer/output
+      - key: PUBLIC_DEMO
+        value: "true"
+      - key: READ_ONLY
+        value: "false"
+      - key: AUTO_SEED_DEMO
+        value: "true"
+      - key: AUTH_REQUIRED
+        value: "true"
+      - key: ALLOW_REGISTRATION
+        value: "true"
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: EMAIL_VERIFICATION_REQUIRED
+        value: "true"
+      - key: EMAIL_VERIFICATION_MINUTES
+        value: "15"
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USE_TLS
+        value: "true"
+      - key: SMTP_USE_SSL
+        value: "false"
+      - key: EMAIL_FROM
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: DRIVE_SCAN_EMAILS
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: ENABLE_FFPROBE
+        value: "false"
+      - key: LOG_LEVEL
+        value: INFO
+    disk:
+      name: cmfi-data
+      mountPath: /opt/render/project/src/storage
+      sizeGB: 1

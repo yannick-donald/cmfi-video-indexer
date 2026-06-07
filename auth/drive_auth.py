@@ -7,6 +7,7 @@ from typing import Sequence
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google.oauth2 import service_account
 from google_auth_oauthlib.flow import InstalledAppFlow
 
 LOGGER = logging.getLogger(__name__)
@@ -44,7 +45,22 @@ def save_credentials(token_path: Path, creds: Credentials) -> None:
     _safe_write_json(token_path, json.loads(creds.to_json()))
 
 
-def authenticate(credentials_path: Path, token_path: Path, scopes: Sequence[str] = DRIVE_SCOPES) -> Credentials:
+def authenticate(
+    credentials_path: Path,
+    token_path: Path,
+    scopes: Sequence[str] = DRIVE_SCOPES,
+    service_account_json: str = "",
+) -> Credentials:
+    if service_account_json.strip():
+        try:
+            payload = json.loads(service_account_json)
+            return service_account.Credentials.from_service_account_info(
+                payload,
+                scopes=list(scopes),
+            )
+        except Exception as e:
+            raise AuthError(f"Service account authentication failed: {e}") from e
+
     if not credentials_path.exists():
         raise AuthError(
             f"Missing OAuth client credentials JSON at '{credentials_path}'. "
@@ -70,4 +86,3 @@ def authenticate(credentials_path: Path, token_path: Path, scopes: Sequence[str]
         return creds
     except Exception as e:
         raise AuthError(f"OAuth authentication failed: {e}") from e
-

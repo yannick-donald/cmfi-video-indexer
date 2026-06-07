@@ -128,3 +128,102 @@ Never commit:
 - `cache/token.json`
 
 They are excluded by `.gitignore`.
+
+## Collaborative deployment on Render
+
+The repository includes a `render.yaml` Blueprint for an authenticated,
+multi-user deployment. Every registered user can search, label and edit video
+metadata. Only the e-mail addresses listed in `DRIVE_SCAN_EMAILS` can launch a
+Google Drive scan.
+
+The Render service uses a persistent disk for SQLite. Render persistent disks
+require a paid web service plan; the Blueprint uses the `starter` plan.
+
+### Deploy
+
+1. Push the repository to GitHub.
+2. In Render, create a new **Blueprint**.
+3. Select this repository and apply `render.yaml`.
+4. Enter the secret environment variables requested by Render:
+   - `ADMIN_EMAIL`: initial administrator e-mail.
+   - `ADMIN_PASSWORD`: initial administrator password (8 characters minimum).
+   - `DRIVE_SCAN_EMAILS`: comma-separated e-mails allowed to scan Drive.
+   - `GOOGLE_SERVICE_ACCOUNT_JSON`: complete Google service account JSON.
+   - `EMAIL_FROM`: verified sender address used for account confirmation.
+   - `SMTP_HOST`: SMTP server supplied by the e-mail provider.
+   - `SMTP_USERNAME`: SMTP account name.
+   - `SMTP_PASSWORD`: SMTP password or API key.
+5. Open the generated `onrender.com` URL after the first deploy completes.
+
+### Verify new users by e-mail
+
+The online Blueprint enables `EMAIL_VERIFICATION_REQUIRED=true`. Registration
+works as follows:
+
+1. The user enters an e-mail address and password.
+2. The application sends a six-digit code through the configured SMTP service.
+3. The code expires after 15 minutes and permits at most six attempts.
+4. The account can sign in only after the correct code is entered.
+
+Use an SMTP delivery provider such as Brevo, Resend or another transactional
+e-mail service. Verify the sender address or domain with that provider, then
+copy its SMTP values into the Render environment variables. The default
+configuration uses port `587` with STARTTLS.
+
+Codes are stored as hashes, deleted after successful verification and replaced
+when a new code is requested. A new code can be requested after 60 seconds.
+
+Render runs:
+
+```bash
+pip install -r requirements.txt
+uvicorn web.server:app --host 0.0.0.0 --port $PORT
+```
+
+The health check is available at:
+
+```text
+/health
+```
+
+### Give the application access to selected Drive folders
+
+1. In Google Cloud, enable the Google Drive API.
+2. Create a service account and download its JSON key.
+3. In Google Drive, share only the folders the application may index with the
+   service account e-mail (`client_email` in the JSON key).
+4. Paste the complete JSON key into Render as
+   `GOOGLE_SERVICE_ACCOUNT_JSON`.
+5. Add the application users who may trigger scans to `DRIVE_SCAN_EMAILS`.
+
+Sharing a folder with the service account exposes that folder and its
+subfolders to the application. It does not expose the user's entire Drive.
+
+### Test authenticated mode locally
+
+```bash
+PUBLIC_DEMO=true \
+READ_ONLY=false \
+AUTO_SEED_DEMO=true \
+AUTH_REQUIRED=true \
+ALLOW_REGISTRATION=true \
+ADMIN_EMAIL=admin@example.com \
+ADMIN_PASSWORD='change-this-password' \
+DRIVE_SCAN_EMAILS=admin@example.com \
+SESSION_COOKIE_SECURE=false \
+DB_PATH=/tmp/cmfi-video-indexer/demo.sqlite3 \
+python -m uvicorn web.server:app --host 127.0.0.1 --port 8080
+```
+
+Open `http://127.0.0.1:8080`, then sign in with the administrator account or
+create another account.
+
+For a local test without an SMTP provider, keep
+`EMAIL_VERIFICATION_REQUIRED=false`. The Render configuration requires
+verification by default.
+
+### Important security action
+
+If OAuth credentials or tokens were ever committed, removing them from the
+latest revision is not enough. Revoke the exposed Google token and rotate the
+OAuth client credentials before using Google Drive again.

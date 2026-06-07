@@ -28,7 +28,14 @@ SORT_COLUMNS = {
 }
 
 ASSET_TYPES = {"raw", "cut"}
-WORKFLOW_STAGES = {"digitized", "to_review", "transcribed", "ready_edit", "published"}
+WORKFLOW_STAGES = {
+    "digitized",
+    "to_review",
+    "transcribed",
+    "treated",
+    "ready_edit",
+    "published",
+}
 
 CHRISTIAN_METADATA_FIELDS = {
     "editorial_title",

@@ -12,7 +12,11 @@ LOGGER = logging.getLogger(__name__)
 
 def run_scan(settings: Settings, *, full: bool = False, folder_id: str | None = None) -> ScanResult:
     settings.ensure_dirs()
-    creds = authenticate(settings.google_credentials_path, settings.google_token_path)
+    creds = authenticate(
+        settings.google_credentials_path,
+        settings.google_token_path,
+        service_account_json=settings.google_service_account_json,
+    )
     repo = VideoRepository(settings.db_path)
     scanner = DriveScanner(settings, repo, creds)
     LOGGER.info(
