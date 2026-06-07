@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ app_name }} — Video Library</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=christian-metadata-1">
 </head>
 <body>
   <div class="app">
@@ -28,11 +28,14 @@
       <div class="toolbar-actions">
         <select id="sortBy">
           <option value="file_name">Sort: Name</option>
+          <option value="editorial_title">Sort: Editorial title</option>
           <option value="modified_at">Sort: Modified</option>
           <option value="file_size">Sort: Size</option>
           <option value="duration_seconds">Sort: Duration</option>
           <option value="folder_path">Sort: Folder</option>
           <option value="resolution">Sort: Resolution</option>
+          <option value="main_theme">Sort: Theme</option>
+          <option value="content_type">Sort: Content type</option>
         </select>
         <select id="sortDir">
           <option value="asc">Ascending</option>
@@ -151,6 +154,6 @@
     </form>
   </dialog>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=christian-metadata-1"></script>
 </body>
 </html>

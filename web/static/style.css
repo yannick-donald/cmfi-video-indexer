@@ -135,6 +135,8 @@ h1 {
 
 select,
 input[type="number"],
+input[type="text"],
+textarea,
 button {
   border-radius: 12px;
   border: 1px solid var(--border);
@@ -303,7 +305,8 @@ dialog {
   border-radius: var(--radius);
   background: var(--panel);
   color: var(--text);
-  width: min(720px, calc(100vw - 32px));
+  width: min(980px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
   box-shadow: var(--shadow);
 }
 
@@ -324,6 +327,86 @@ dialog article {
   color: var(--muted);
 }
 
+.metadata-editor {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.metadata-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.metadata-header h3,
+.metadata-terms h4 {
+  margin: 0;
+}
+
+.metadata-hint {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.metadata-field {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.metadata-field-wide {
+  grid-column: 1 / -1;
+}
+
+.metadata-field input,
+.metadata-field textarea {
+  width: 100%;
+  font: inherit;
+}
+
+.metadata-field textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.metadata-terms {
+  margin-top: 16px;
+}
+
+.term-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.term-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--text);
+  padding: 6px 9px;
+  font-size: 0.78rem;
+}
+
+.empty-inline {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 @media (max-width: 980px) {
   .layout {
     grid-template-columns: 1fr;
@@ -335,5 +418,9 @@ dialog article {
 
   .header {
     flex-direction: column;
+  }
+
+  .metadata-grid {
+    grid-template-columns: 1fr;
   }
 }

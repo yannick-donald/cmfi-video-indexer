@@ -101,12 +101,16 @@ function renderRows(items) {
       (item) => `
       <tr>
         <td>
-          <div class="file-name">${escapeHtml(item.file_name)}</div>
+          <div class="file-name">${escapeHtml(item.editorial_title || item.clean_title || item.file_name)}</div>
+          ${item.editorial_title || item.clean_title ? `<div class="folder-path">${escapeHtml(item.file_name)}</div>` : ""}
           <div class="folder-path">${escapeHtml(item.owner || "Unknown owner")}</div>
         </td>
         <td><div class="folder-path">${escapeHtml(item.folder_path || "—")}</div></td>
         <td>${escapeHtml(item.file_extension || "—")}</td>
-        <td>${escapeHtml(item.resolution || "—")}</td>
+        <td>
+          <div>${escapeHtml(item.resolution || "—")}</div>
+          ${item.main_theme ? `<div class="folder-path">${escapeHtml(item.main_theme)}</div>` : ""}
+        </td>
         <td>${escapeHtml(item.duration_human)}</td>
         <td>${escapeHtml(item.file_size_human)}</td>
         <td>${escapeHtml(formatDate(item.modified_at))}</td>
@@ -153,6 +157,7 @@ async function showDetails(fileId) {
     ["Drive link", item.drive_url ? `<a href="${item.drive_url}" target="_blank" rel="noopener">Open in Google Drive</a>` : "—"],
   ];
 
+  els.detailContent.dataset.fileId = fileId;
   els.detailContent.innerHTML = rows
     .map(
       ([label, value]) => `
@@ -161,9 +166,121 @@ async function showDetails(fileId) {
         <div>${typeof value === "string" && value.startsWith("<a") ? value : escapeHtml(String(value))}</div>
       </div>`
     )
-    .join("");
+    .join("") + renderChristianMetadataEditor(item);
 
   els.detailDialog.showModal();
+}
+
+const metadataFields = [
+  ["editorial_title", "Titre éditorial", "input"],
+  ["original_title", "Titre original", "input"],
+  ["alternate_titles", "Autres titres", "textarea"],
+  ["content_type", "Type de contenu", "input"],
+  ["main_theme", "Thème principal", "input"],
+  ["spiritual_themes", "Thèmes spirituels", "textarea"],
+  ["doctrine_topics", "Doctrine", "textarea"],
+  ["biblical_topics", "Sujets bibliques", "textarea"],
+  ["bible_references", "Références bibliques", "textarea"],
+  ["songs", "Chants", "textarea"],
+  ["speaker", "Orateur", "input"],
+  ["preacher", "Prédicateur", "input"],
+  ["worship_leaders", "Conducteurs de louange", "input"],
+  ["ministry", "Ministère", "input"],
+  ["event_name", "Événement", "input"],
+  ["event_date", "Date événement", "input"],
+  ["location", "Lieu", "input"],
+  ["language", "Langue", "input"],
+  ["audience", "Public", "input"],
+  ["series_name", "Série", "input"],
+  ["session_number", "Session", "input"],
+  ["teaching_type", "Format d'enseignement", "input"],
+  ["keywords", "Mots-clés", "textarea"],
+  ["semantic_tags", "Tags sémantiques", "textarea"],
+  ["transcript_status", "Statut transcription", "input"],
+  ["transcript_text_path", "Chemin transcription", "input"],
+  ["transcript_summary", "Résumé transcription", "textarea"],
+  ["ai_summary", "Résumé IA", "textarea"],
+  ["manual_notes", "Notes manuelles", "textarea"],
+  ["metadata_source", "Source métadonnées", "input"],
+  ["metadata_confidence", "Confiance 0-1", "number"],
+];
+
+function renderChristianMetadataEditor(item) {
+  const terms = item.lexicon_terms || [];
+  const termBadges = terms.length
+    ? terms.map((term) => `<span class="term-badge">${escapeHtml(term.category)} · ${escapeHtml(term.term)}</span>`).join("")
+    : `<span class="empty-inline">Aucun terme normalisé pour l'instant.</span>`;
+
+  const fields = metadataFields
+    .map(([key, label, type]) => {
+      const value = item[key] ?? "";
+      if (type === "textarea") {
+        return `
+          <label class="metadata-field metadata-field-wide">
+            <span>${escapeHtml(label)}</span>
+            <textarea data-meta="${escapeHtml(key)}" rows="3">${escapeHtml(value)}</textarea>
+          </label>`;
+      }
+      return `
+        <label class="metadata-field">
+          <span>${escapeHtml(label)}</span>
+          <input data-meta="${escapeHtml(key)}" type="${type}" ${type === "number" ? 'min="0" max="1" step="0.01"' : ""} value="${escapeAttr(value)}">
+        </label>`;
+    })
+    .join("");
+
+  return `
+    <section class="metadata-editor">
+      <div class="metadata-header">
+        <h3>Métadonnées chrétiennes</h3>
+        <button id="saveMetadataButton" type="button">Save metadata</button>
+      </div>
+      <p class="metadata-hint">Sépare les listes par des points-virgules : foi; repentance; grâce.</p>
+      <div class="metadata-grid">${fields}</div>
+      <div class="metadata-terms">
+        <h4>Lexique associé</h4>
+        <div class="term-list">${termBadges}</div>
+      </div>
+      <p id="metadataSaveStatus" class="filters-status"></p>
+    </section>`;
+}
+
+async function saveMetadata() {
+  const fileId = els.detailContent.dataset.fileId;
+  if (!fileId) return;
+  const payload = {};
+  els.detailContent.querySelectorAll("[data-meta]").forEach((field) => {
+    payload[field.dataset.meta] = field.value;
+  });
+
+  const status = document.getElementById("metadataSaveStatus");
+  const button = document.getElementById("saveMetadataButton");
+  status.textContent = "Saving metadata...";
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/videos/${fileId}/metadata`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${response.status}`);
+    }
+    const item = await response.json();
+    status.textContent = "Metadata saved.";
+    await Promise.all([loadVideos(), loadStats(), loadFilters()]);
+    const termsContainer = els.detailContent.querySelector(".term-list");
+    if (termsContainer) {
+      termsContainer.innerHTML = (item.lexicon_terms || [])
+        .map((term) => `<span class="term-badge">${escapeHtml(term.category)} · ${escapeHtml(term.term)}</span>`)
+        .join("") || `<span class="empty-inline">Aucun terme normalisé pour l'instant.</span>`;
+    }
+  } catch (error) {
+    status.textContent = `Save failed: ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function escapeHtml(value) {
@@ -172,6 +289,10 @@ function escapeHtml(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function escapeAttr(value) {
+  return escapeHtml(value);
 }
 
 function formatDate(value) {
@@ -247,6 +368,14 @@ els.resultsBody.addEventListener("click", (event) => {
   if (!(target instanceof HTMLElement)) return;
   if (target.classList.contains("detail-btn")) {
     showDetails(target.dataset.id);
+  }
+});
+
+els.detailContent.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  if (target.id === "saveMetadataButton") {
+    saveMetadata();
   }
 });
 

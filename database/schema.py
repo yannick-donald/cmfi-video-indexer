@@ -98,13 +98,36 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # 2) Christian semantic enrichment fields (additive)
     for col, sql_type in [
         ("clean_title", "TEXT"),
+        ("editorial_title", "TEXT"),
+        ("original_title", "TEXT"),
+        ("alternate_titles", "TEXT"),
         ("speaker", "TEXT"),
+        ("preacher", "TEXT"),
         ("ministry", "TEXT"),
         ("main_theme", "TEXT"),
+        ("spiritual_themes", "TEXT"),
+        ("doctrine_topics", "TEXT"),
         ("biblical_topics", "TEXT"),  # JSON or pipe-delimited
         ("bible_references", "TEXT"),  # extracted refs, e.g. \"Romans 8; John 3:16\"
+        ("songs", "TEXT"),
+        ("worship_leaders", "TEXT"),
+        ("content_type", "TEXT"),
+        ("event_name", "TEXT"),
+        ("event_date", "TEXT"),
+        ("location", "TEXT"),
+        ("language", "TEXT"),
+        ("audience", "TEXT"),
+        ("series_name", "TEXT"),
+        ("session_number", "TEXT"),
         ("teaching_type", "TEXT"),
         ("ai_summary", "TEXT"),
+        ("transcript_status", "TEXT"),
+        ("transcript_text_path", "TEXT"),
+        ("transcript_summary", "TEXT"),
+        ("manual_notes", "TEXT"),
+        ("metadata_source", "TEXT"),
+        ("metadata_confidence", "REAL"),
+        ("metadata_updated_at", "TEXT"),
         ("keywords", "TEXT"),
         ("semantic_tags", "TEXT"),
         ("normalized_name", "TEXT"),
@@ -113,27 +136,143 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
     conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_internal_video_id ON videos(internal_video_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_speaker ON videos(speaker)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_preacher ON videos(preacher)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_main_theme ON videos(main_theme)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_content_type ON videos(content_type)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_event_name ON videos(event_name)")
 
-    # 3) Full-text search index (FTS5) for enriched fields
-    # Note: this is a standalone FTS table; we keep it synced from code on upsert.
+    # 3) Christian lexicon and per-video term assignments.
+    # Categories can include theme, doctrine, scripture, song, person, place,
+    # ministry, event, book, topic, keyword, or any future editorial vocabulary.
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS lexicon_terms (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT NOT NULL,
+            term TEXT NOT NULL,
+            normalized_term TEXT NOT NULL,
+            description TEXT,
+            parent_id INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(category, normalized_term),
+            FOREIGN KEY(parent_id) REFERENCES lexicon_terms(id)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_lexicon_terms_category ON lexicon_terms(category)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_lexicon_terms_term ON lexicon_terms(term COLLATE NOCASE)")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS video_lexicon_terms (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_id TEXT NOT NULL,
+            term_id INTEGER NOT NULL,
+            source TEXT DEFAULT 'manual',
+            confidence REAL,
+            evidence TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(file_id, term_id, source),
+            FOREIGN KEY(file_id) REFERENCES videos(file_id) ON DELETE CASCADE,
+            FOREIGN KEY(term_id) REFERENCES lexicon_terms(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_video_lexicon_file_id ON video_lexicon_terms(file_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_video_lexicon_term_id ON video_lexicon_terms(term_id)")
+
+    # 4) Full-text search index (FTS5) for enriched fields
+    # Note: this is a standalone FTS table; we keep it synced from code on upsert.
+    fts_sql = """
         CREATE VIRTUAL TABLE IF NOT EXISTS videos_fts USING fts5(
             file_id UNINDEXED,
             internal_video_id,
             file_name,
             clean_title,
+            editorial_title,
+            original_title,
+            alternate_titles,
             folder_path,
             speaker,
+            preacher,
             ministry,
             main_theme,
+            spiritual_themes,
+            doctrine_topics,
             biblical_topics,
             bible_references,
+            songs,
+            worship_leaders,
+            content_type,
+            event_name,
+            location,
+            series_name,
             teaching_type,
             ai_summary,
+            transcript_summary,
             keywords,
             semantic_tags
         )
         """
+    required_fts_cols = {
+        "file_id",
+        "internal_video_id",
+        "file_name",
+        "clean_title",
+        "editorial_title",
+        "original_title",
+        "alternate_titles",
+        "folder_path",
+        "speaker",
+        "preacher",
+        "ministry",
+        "main_theme",
+        "spiritual_themes",
+        "doctrine_topics",
+        "biblical_topics",
+        "bible_references",
+        "songs",
+        "worship_leaders",
+        "content_type",
+        "event_name",
+        "location",
+        "series_name",
+        "teaching_type",
+        "ai_summary",
+        "transcript_summary",
+        "keywords",
+        "semantic_tags",
+    }
+    existing_fts_cols = _table_columns(conn, "videos_fts") if _table_exists(conn, "videos_fts") else set()
+    if existing_fts_cols and not required_fts_cols.issubset(existing_fts_cols):
+        conn.execute("DROP TABLE videos_fts")
+    conn.execute(fts_sql)
+    conn.execute(
+        """
+        INSERT INTO videos_fts(
+            file_id, internal_video_id, file_name, clean_title, editorial_title,
+            original_title, alternate_titles, folder_path, speaker, preacher,
+            ministry, main_theme, spiritual_themes, doctrine_topics,
+            biblical_topics, bible_references, songs, worship_leaders,
+            content_type, event_name, location, series_name, teaching_type,
+            ai_summary, transcript_summary, keywords, semantic_tags
+        )
+        SELECT
+            file_id, internal_video_id, file_name, clean_title, editorial_title,
+            original_title, alternate_titles, folder_path, speaker, preacher,
+            ministry, main_theme, spiritual_themes, doctrine_topics,
+            biblical_topics, bible_references, songs, worship_leaders,
+            content_type, event_name, location, series_name, teaching_type,
+            ai_summary, transcript_summary, keywords, semantic_tags
+        FROM videos
+        WHERE file_id NOT IN (SELECT file_id FROM videos_fts)
+        """
     )
+
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type IN ('table', 'virtual table') AND name = ?",
+        (table,),
+    ).fetchone()
+    return row is not None

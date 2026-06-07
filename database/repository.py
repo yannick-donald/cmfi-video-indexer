@@ -17,8 +17,48 @@ SORT_COLUMNS = {
     "resolution": "resolution",
     "file_extension": "file_extension",
     "internal_video_id": "internal_video_id",
+    "editorial_title": "editorial_title COLLATE NOCASE",
     "speaker": "speaker COLLATE NOCASE",
+    "preacher": "preacher COLLATE NOCASE",
     "main_theme": "main_theme COLLATE NOCASE",
+    "content_type": "content_type COLLATE NOCASE",
+    "event_name": "event_name COLLATE NOCASE",
+}
+
+CHRISTIAN_METADATA_FIELDS = {
+    "editorial_title",
+    "original_title",
+    "alternate_titles",
+    "clean_title",
+    "normalized_name",
+    "speaker",
+    "preacher",
+    "ministry",
+    "main_theme",
+    "spiritual_themes",
+    "doctrine_topics",
+    "biblical_topics",
+    "bible_references",
+    "songs",
+    "worship_leaders",
+    "content_type",
+    "event_name",
+    "event_date",
+    "location",
+    "language",
+    "audience",
+    "series_name",
+    "session_number",
+    "teaching_type",
+    "ai_summary",
+    "transcript_status",
+    "transcript_text_path",
+    "transcript_summary",
+    "manual_notes",
+    "metadata_source",
+    "metadata_confidence",
+    "keywords",
+    "semantic_tags",
 }
 
 
@@ -121,28 +161,156 @@ class VideoRepository:
         conn.execute(
             """
             INSERT INTO videos_fts(
-                file_id, internal_video_id, file_name, clean_title, folder_path,
-                speaker, ministry, main_theme, biblical_topics, bible_references,
-                teaching_type, ai_summary, keywords, semantic_tags
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                file_id, internal_video_id, file_name, clean_title, editorial_title,
+                original_title, alternate_titles, folder_path, speaker, preacher,
+                ministry, main_theme, spiritual_themes, doctrine_topics,
+                biblical_topics, bible_references, songs, worship_leaders,
+                content_type, event_name, location, series_name, teaching_type,
+                ai_summary, transcript_summary, keywords, semantic_tags
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 payload.get("file_id", ""),
                 payload.get("internal_video_id", ""),
                 payload.get("file_name", ""),
                 payload.get("clean_title", ""),
+                payload.get("editorial_title", ""),
+                payload.get("original_title", ""),
+                payload.get("alternate_titles", ""),
                 payload.get("folder_path", ""),
                 payload.get("speaker", ""),
+                payload.get("preacher", ""),
                 payload.get("ministry", ""),
                 payload.get("main_theme", ""),
+                payload.get("spiritual_themes", ""),
+                payload.get("doctrine_topics", ""),
                 payload.get("biblical_topics", ""),
                 payload.get("bible_references", ""),
+                payload.get("songs", ""),
+                payload.get("worship_leaders", ""),
+                payload.get("content_type", ""),
+                payload.get("event_name", ""),
+                payload.get("location", ""),
+                payload.get("series_name", ""),
                 payload.get("teaching_type", ""),
                 payload.get("ai_summary", ""),
+                payload.get("transcript_summary", ""),
                 payload.get("keywords", ""),
                 payload.get("semantic_tags", ""),
             ),
         )
+
+    def update_christian_metadata(self, file_id: str, metadata: dict[str, Any]) -> VideoRecord | None:
+        allowed = {key: metadata[key] for key in CHRISTIAN_METADATA_FIELDS if key in metadata}
+        if not allowed:
+            return self.get_video(file_id)
+
+        for key, value in list(allowed.items()):
+            if key == "metadata_confidence":
+                allowed[key] = None if value in ("", None) else float(value)
+            else:
+                allowed[key] = str(value or "").strip()
+        allowed["metadata_updated_at"] = self._now_sql_expr()
+
+        assignments = ", ".join(f"{key} = ?" for key in allowed)
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM videos WHERE file_id = ?", (file_id,)).fetchone()
+            if not row:
+                return None
+            conn.execute(
+                f"UPDATE videos SET {assignments} WHERE file_id = ?",
+                [*allowed.values(), file_id],
+            )
+            updated = conn.execute("SELECT * FROM videos WHERE file_id = ?", (file_id,)).fetchone()
+            assert updated is not None
+            payload = VideoRecord.from_row(updated).to_dict()
+            self._upsert_fts(conn, payload)
+            self._sync_manual_lexicon_terms(conn, file_id, payload)
+            conn.commit()
+            return VideoRecord.from_row(updated)
+
+    def get_video_lexicon_terms(self, file_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    vlt.id,
+                    lt.category,
+                    lt.term,
+                    lt.description,
+                    vlt.source,
+                    vlt.confidence,
+                    vlt.evidence,
+                    vlt.created_at
+                FROM video_lexicon_terms vlt
+                JOIN lexicon_terms lt ON lt.id = vlt.term_id
+                WHERE vlt.file_id = ?
+                ORDER BY lt.category COLLATE NOCASE, lt.term COLLATE NOCASE
+                """,
+                (file_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _sync_manual_lexicon_terms(self, conn: sqlite3.Connection, file_id: str, payload: dict[str, Any]) -> None:
+        field_categories = {
+            "main_theme": "theme",
+            "spiritual_themes": "theme",
+            "doctrine_topics": "doctrine",
+            "biblical_topics": "biblical_topic",
+            "bible_references": "scripture",
+            "songs": "song",
+            "worship_leaders": "person",
+            "speaker": "person",
+            "preacher": "person",
+            "ministry": "ministry",
+            "event_name": "event",
+            "location": "place",
+            "content_type": "content_type",
+            "keywords": "keyword",
+            "semantic_tags": "semantic_tag",
+        }
+        conn.execute(
+            """
+            DELETE FROM video_lexicon_terms
+            WHERE file_id = ?
+              AND source = 'manual'
+              AND term_id IN (
+                SELECT id FROM lexicon_terms
+                WHERE category IN ({})
+              )
+            """.format(",".join("?" for _ in sorted(set(field_categories.values())))),
+            [file_id, *sorted(set(field_categories.values()))],
+        )
+        for field, category in field_categories.items():
+            for term in _split_terms(str(payload.get(field) or "")):
+                term_id = self._ensure_lexicon_term(conn, category, term)
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO video_lexicon_terms(file_id, term_id, source, confidence, evidence)
+                    VALUES(?, ?, 'manual', ?, ?)
+                    """,
+                    (file_id, term_id, payload.get("metadata_confidence"), field),
+                )
+
+    def _ensure_lexicon_term(self, conn: sqlite3.Connection, category: str, term: str) -> int:
+        normalized = _normalize_term(term)
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO lexicon_terms(category, term, normalized_term)
+            VALUES(?, ?, ?)
+            """,
+            (category, term, normalized),
+        )
+        row = conn.execute(
+            "SELECT id FROM lexicon_terms WHERE category = ? AND normalized_term = ?",
+            (category, normalized),
+        ).fetchone()
+        assert row is not None
+        return int(row["id"])
+
+    def _now_sql_expr(self) -> str:
+        with self._connect() as conn:
+            return str(conn.execute("SELECT datetime('now')").fetchone()[0])
 
     def search(
         self,
@@ -370,9 +538,34 @@ class VideoRepository:
         if filters.query.strip():
             q = f"%{filters.query.strip()}%"
             clauses.append(
-                "(file_name LIKE ? OR folder_path LIKE ? OR parent_folder LIKE ? OR owner LIKE ?)"
+                """
+                (
+                    file_name LIKE ?
+                    OR folder_path LIKE ?
+                    OR parent_folder LIKE ?
+                    OR owner LIKE ?
+                    OR editorial_title LIKE ?
+                    OR original_title LIKE ?
+                    OR alternate_titles LIKE ?
+                    OR clean_title LIKE ?
+                    OR speaker LIKE ?
+                    OR preacher LIKE ?
+                    OR ministry LIKE ?
+                    OR main_theme LIKE ?
+                    OR spiritual_themes LIKE ?
+                    OR doctrine_topics LIKE ?
+                    OR biblical_topics LIKE ?
+                    OR bible_references LIKE ?
+                    OR songs LIKE ?
+                    OR content_type LIKE ?
+                    OR event_name LIKE ?
+                    OR transcript_summary LIKE ?
+                    OR keywords LIKE ?
+                    OR semantic_tags LIKE ?
+                )
+                """
             )
-            params.extend([q, q, q, q])
+            params.extend([q] * 22)
 
         if filters.folder:
             clauses.append("folder_path = ?")
@@ -418,3 +611,23 @@ class VideoRepository:
         if not clauses:
             return "", params
         return "WHERE " + " AND ".join(clauses), params
+
+
+def _split_terms(value: str) -> list[str]:
+    raw_terms = value.replace("\n", ";").replace("|", ";").split(";")
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_terms:
+        term = raw.strip(" ,")
+        if not term:
+            continue
+        key = _normalize_term(term)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(term)
+    return out
+
+
+def _normalize_term(value: str) -> str:
+    return " ".join(value.casefold().strip().split())

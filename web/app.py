@@ -99,8 +99,12 @@ def create_app(settings: Settings) -> FastAPI:
             "resolution",
             "file_extension",
             "internal_video_id",
+            "editorial_title",
             "speaker",
+            "preacher",
             "main_theme",
+            "content_type",
+            "event_name",
         }:
             raise HTTPException(status_code=400, detail="Invalid sort column")
 
@@ -148,7 +152,19 @@ def create_app(settings: Settings) -> FastAPI:
         payload = item.to_dict()
         payload["file_size_human"] = format_bytes(item.file_size)
         payload["duration_human"] = format_duration(item.duration_seconds)
+        payload["lexicon_terms"] = repo.get_video_lexicon_terms(file_id)
         return payload
+
+    @app.put("/api/videos/{file_id}/metadata")
+    async def update_video_metadata(file_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        item = repo.update_christian_metadata(file_id, payload)
+        if not item:
+            raise HTTPException(status_code=404, detail="Video not found")
+        data = item.to_dict()
+        data["file_size_human"] = format_bytes(item.file_size)
+        data["duration_human"] = format_duration(item.duration_seconds)
+        data["lexicon_terms"] = repo.get_video_lexicon_terms(file_id)
+        return data
 
     return app
 
