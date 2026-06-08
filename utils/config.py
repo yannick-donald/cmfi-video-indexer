@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     google_credentials_path: Path = Field(default=Path("credentials.json"), alias="GOOGLE_CREDENTIALS_PATH")
     google_token_path: Path = Field(default=Path("cache/token.json"), alias="GOOGLE_TOKEN_PATH")
     google_service_account_json: str = Field(default="", alias="GOOGLE_SERVICE_ACCOUNT_JSON")
-    drive_scan_emails: str = Field(default="", alias="DRIVE_SCAN_EMAILS")
+    drive_scan_folder_id: str = Field(default="", alias="DRIVE_SCAN_FOLDER_ID")
 
     db_path: Path = Field(default=Path("database/index.sqlite3"), alias="DB_PATH")
     output_dir: Path = Field(default=Path("output"), alias="OUTPUT_DIR")
@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     public_demo: bool = Field(default=False, alias="PUBLIC_DEMO")
     read_only: bool = Field(default=False, alias="READ_ONLY")
     auto_seed_demo: bool = Field(default=False, alias="AUTO_SEED_DEMO")
+    purge_demo_data: bool = Field(default=False, alias="PURGE_DEMO_DATA")
     auth_required: bool = Field(default=False, alias="AUTH_REQUIRED")
     allow_registration: bool = Field(default=True, alias="ALLOW_REGISTRATION")
     admin_email: str = Field(default="", alias="ADMIN_EMAIL")

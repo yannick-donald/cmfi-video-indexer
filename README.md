@@ -133,8 +133,8 @@ They are excluded by `.gitignore`.
 
 The repository includes a `render.yaml` Blueprint for an authenticated,
 multi-user deployment. Every registered user can search, label and edit video
-metadata. Only the e-mail addresses listed in `DRIVE_SCAN_EMAILS` can launch a
-Google Drive scan.
+metadata. Every authenticated user can launch an incremental scan of one fixed
+Google Drive folder. Only the Render administrator can change that folder.
 
 The Render service uses a persistent disk for SQLite. Render persistent disks
 require a paid web service plan; the Blueprint uses the `starter` plan.
@@ -147,7 +147,7 @@ require a paid web service plan; the Blueprint uses the `starter` plan.
 4. Enter the secret environment variables requested by Render:
    - `ADMIN_EMAIL`: initial administrator e-mail.
    - `ADMIN_PASSWORD`: initial administrator password (8 characters minimum).
-   - `DRIVE_SCAN_EMAILS`: comma-separated e-mails allowed to scan Drive.
+   - `DRIVE_SCAN_FOLDER_ID`: URL or ID of the fixed `Dpt DIGITAL` folder.
    - `GOOGLE_SERVICE_ACCOUNT_JSON`: complete Google service account JSON.
    - `EMAIL_FROM`: verified sender address used for account confirmation.
    - `SMTP_HOST`: SMTP server supplied by the e-mail provider.
@@ -194,22 +194,30 @@ The health check is available at:
    service account e-mail (`client_email` in the JSON key).
 4. Paste the complete JSON key into Render as
    `GOOGLE_SERVICE_ACCOUNT_JSON`.
-5. Add the application users who may trigger scans to `DRIVE_SCAN_EMAILS`.
+5. Paste the shared folder URL or ID into `DRIVE_SCAN_FOLDER_ID`.
 
 Sharing a folder with the service account exposes that folder and its
 subfolders to the application. It does not expose the user's entire Drive.
+Registered users can run the scan, but they cannot change the configured folder
+from the application.
+
+The Render deployment disables demo seeding and removes existing records whose
+Drive ID starts with `demo-`. Incremental rescans add new videos and update
+changed Drive metadata while preserving labels, workflow stages and manually
+edited Christian metadata.
 
 ### Test authenticated mode locally
 
 ```bash
-PUBLIC_DEMO=true \
+PUBLIC_DEMO=false \
 READ_ONLY=false \
-AUTO_SEED_DEMO=true \
+AUTO_SEED_DEMO=false \
+PURGE_DEMO_DATA=true \
 AUTH_REQUIRED=true \
 ALLOW_REGISTRATION=true \
 ADMIN_EMAIL=admin@example.com \
 ADMIN_PASSWORD='change-this-password' \
-DRIVE_SCAN_EMAILS=admin@example.com \
+DRIVE_SCAN_FOLDER_ID='https://drive.google.com/drive/folders/your-folder-id' \
 SESSION_COOKIE_SECURE=false \
 DB_PATH=/tmp/cmfi-video-indexer/demo.sqlite3 \
 python -m uvicorn web.server:app --host 127.0.0.1 --port 8080

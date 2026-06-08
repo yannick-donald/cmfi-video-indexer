@@ -53,7 +53,6 @@ const els = {
   statDuration: document.getElementById("statDuration"),
   detailDialog: document.getElementById("detailDialog"),
   detailContent: document.getElementById("detailContent"),
-  scanFolderInput: document.getElementById("scanFolderInput"),
   scanFolderButton: document.getElementById("scanFolderButton"),
   scanFolderStatus: document.getElementById("scanFolderStatus"),
   productionOverview: document.getElementById("productionOverview"),
@@ -655,36 +654,55 @@ els.detailContent.addEventListener("change", (event) => {
 });
 
 async function triggerFolderScan() {
-  const value = els.scanFolderInput.value.trim();
-  if (!value) {
-    els.scanFolderStatus.textContent = "Please paste a folder URL or ID.";
-    return;
-  }
-  els.scanFolderStatus.textContent = "Scanning folder... This may take a while.";
+  els.scanFolderStatus.textContent = "Démarrage de la synchronisation...";
   els.scanFolderButton.disabled = true;
   try {
     const response = await fetch("/api/scan-folder", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ folder_url_or_id: value }),
     });
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
       throw new Error(err.detail || `HTTP ${response.status}`);
     }
-    const data = await response.json();
-    els.scanFolderStatus.textContent = `Scan complete. Indexed ${data.videos_indexed} videos (skipped ${data.videos_skipped}, errors ${data.errors}).`;
-    // Refresh stats and list so new videos show up.
-    await Promise.all([loadStats(), loadVideos(), loadFilters()]);
+    await pollFolderScan();
   } catch (error) {
-    els.scanFolderStatus.textContent = `Scan failed: ${error.message}`;
-  } finally {
+    els.scanFolderStatus.textContent = `Échec du scan : ${error.message}`;
     els.scanFolderButton.disabled = false;
   }
 }
 
+async function pollFolderScan() {
+  const response = await fetch("/api/scan-folder/status");
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `HTTP ${response.status}`);
+  }
+  const data = await response.json();
+  if (data.status === "running") {
+    els.scanFolderStatus.textContent = "Synchronisation en cours...";
+    window.setTimeout(() => pollFolderScan().catch(handleScanPollingError), 2000);
+    return;
+  }
+  if (data.status === "succeeded") {
+    els.scanFolderStatus.textContent = `Terminé : ${data.videos_indexed} ajoutées ou mises à jour, ${data.videos_skipped} inchangées, ${data.errors} erreurs.`;
+    els.scanFolderButton.disabled = false;
+    await Promise.all([loadStats(), loadWorkflowStats(), loadVideos(), loadFilters()]);
+    return;
+  }
+  if (data.status === "failed") {
+    throw new Error(data.message || "Le scan Drive a échoué");
+  }
+  els.scanFolderButton.disabled = false;
+}
+
+function handleScanPollingError(error) {
+  els.scanFolderStatus.textContent = `Échec du scan : ${error.message}`;
+  els.scanFolderButton.disabled = false;
+}
+
 if (els.scanFolderButton && !appMode.readOnly) {
   els.scanFolderButton.addEventListener("click", triggerFolderScan);
+  pollFolderScan().catch(handleScanPollingError);
 }
 
 if (els.logoutButton) {

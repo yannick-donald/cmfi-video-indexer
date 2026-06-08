@@ -73,6 +73,15 @@ CHRISTIAN_METADATA_FIELDS = {
     "semantic_tags",
 }
 
+PRESERVE_ON_RESCAN = CHRISTIAN_METADATA_FIELDS | {
+    "internal_video_id",
+    "asset_type",
+    "workflow_stage",
+    "source_file_id",
+    "workflow_notes",
+    "workflow_updated_at",
+}
+
 
 @dataclass(slots=True)
 class SearchFilters:
@@ -109,7 +118,45 @@ class VideoRepository:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         return conn
+
+    def delete_demo_videos(self) -> int:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT file_id FROM videos WHERE file_id LIKE 'demo-%'"
+            ).fetchall()
+            file_ids = [str(row["file_id"]) for row in rows]
+            if not file_ids:
+                return 0
+
+            placeholders = ", ".join("?" for _ in file_ids)
+            conn.execute(
+                f"UPDATE videos SET source_file_id = NULL WHERE source_file_id IN ({placeholders})",
+                file_ids,
+            )
+            conn.execute(
+                f"DELETE FROM videos_fts WHERE file_id IN ({placeholders})",
+                file_ids,
+            )
+            conn.execute(
+                f"DELETE FROM video_internal_ids WHERE file_id IN ({placeholders})",
+                file_ids,
+            )
+            conn.execute(
+                f"DELETE FROM videos WHERE file_id IN ({placeholders})",
+                file_ids,
+            )
+            conn.execute(
+                """
+                DELETE FROM labels
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM video_labels WHERE video_labels.label_id = labels.id
+                )
+                """
+            )
+            conn.commit()
+        return len(file_ids)
 
     def get_modified_map(self) -> dict[str, str]:
         with self._connect() as conn:
@@ -125,7 +172,11 @@ class VideoRepository:
             payload["has_audio"] = int(bool(payload["has_audio"]))
         columns = list(payload.keys())
         placeholders = ", ".join("?" for _ in columns)
-        updates = ", ".join(f"{col}=excluded.{col}" for col in columns if col != "file_id")
+        updates = ", ".join(
+            f"{col}=excluded.{col}"
+            for col in columns
+            if col != "file_id" and col not in PRESERVE_ON_RESCAN
+        )
         sql = f"""
             INSERT INTO videos ({", ".join(columns)})
             VALUES ({placeholders})

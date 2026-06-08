@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +22,7 @@ from utils.formatters import format_bytes, format_duration
 WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
 STATIC_DIR = WEB_DIR / "static"
+LOGGER = logging.getLogger(__name__)
 
 
 def create_app(settings: Settings) -> FastAPI:
@@ -26,12 +30,29 @@ def create_app(settings: Settings) -> FastAPI:
     repo = VideoRepository(settings.db_path)
     auth_repo = AuthRepository(settings.db_path)
     email_sender = EmailSender(settings)
+    if settings.purge_demo_data:
+        deleted_demo_count = repo.delete_demo_videos()
+        if deleted_demo_count:
+            LOGGER.info("Removed %s demo videos", deleted_demo_count)
     if settings.auto_seed_demo and repo.get_stats()["total_videos"] == 0:
         seed_public_demo(repo)
     if settings.admin_email and settings.admin_password:
         auth_repo.ensure_user(settings.admin_email, settings.admin_password)
 
     app = FastAPI(title="Google Drive Video Library", version="1.0.0")
+    scan_lock = asyncio.Lock()
+    background_tasks: set[asyncio.Task[Any]] = set()
+    scan_state: dict[str, Any] = {
+        "status": "idle",
+        "started_at": None,
+        "finished_at": None,
+        "videos_found": 0,
+        "videos_indexed": 0,
+        "videos_skipped": 0,
+        "folders_scanned": 0,
+        "errors": 0,
+        "message": "",
+    }
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -46,7 +67,7 @@ def create_app(settings: Settings) -> FastAPI:
         token = request.cookies.get(settings.session_cookie_name, "")
         user = auth_repo.get_session_user(token) if token else None
         if user:
-            user["can_scan_drive"] = _can_scan_drive(settings, str(user["email"]))
+            user["can_scan_drive"] = bool(_configured_scan_folder_id(settings))
         request.state.user = user
         if settings.auth_required and not public_path and not user:
             if request.url.path.startswith("/api/"):
@@ -171,6 +192,7 @@ def create_app(settings: Settings) -> FastAPI:
                 "read_only": settings.read_only,
                 "auth_required": settings.auth_required,
                 "current_user": request.state.user,
+                "drive_scan_configured": bool(_configured_scan_folder_id(settings)),
             },
         )
 
@@ -206,27 +228,38 @@ def create_app(settings: Settings) -> FastAPI:
     async def raw_video_options(exclude_file_id: str = Query(default="")) -> dict[str, Any]:
         return {"items": repo.get_raw_video_options(exclude_file_id)}
 
-    @app.post("/api/scan-folder")
-    async def scan_folder(request: Request, payload: dict[str, Any]) -> JSONResponse:
+    @app.get("/api/scan-folder/status")
+    async def scan_folder_status(request: Request) -> dict[str, Any]:
         _require_drive_scan(settings, request.state.user)
-        raw = (payload.get("folder_url_or_id") or "").strip()
-        if not raw:
-            raise HTTPException(status_code=400, detail="folder_url_or_id is required")
+        return dict(scan_state)
 
-        folder_id = _extract_folder_id(raw)
-        if not folder_id:
-            raise HTTPException(status_code=400, detail="Could not extract folder ID from input")
+    @app.post("/api/scan-folder")
+    async def scan_folder(request: Request) -> JSONResponse:
+        folder_id = _require_drive_scan(settings, request.state.user)
+        if scan_lock.locked():
+            return JSONResponse(
+                {"detail": "Un scan Drive est déjà en cours", **scan_state},
+                status_code=409,
+            )
 
-        scan_result = run_scan(settings, full=False, folder_id=folder_id)
-        return JSONResponse(
+        await scan_lock.acquire()
+        scan_state.update(
             {
-                "folder_id": folder_id,
-                "videos_found": scan_result.videos_found,
-                "videos_indexed": scan_result.videos_indexed,
-                "videos_skipped": scan_result.videos_skipped,
-                "errors": scan_result.errors,
+                "status": "running",
+                "started_at": _utc_now(),
+                "finished_at": None,
+                "videos_found": 0,
+                "videos_indexed": 0,
+                "videos_skipped": 0,
+                "folders_scanned": 0,
+                "errors": 0,
+                "message": "Analyse du dossier Drive en cours",
             }
         )
+        task = asyncio.create_task(_run_drive_scan(settings, folder_id, scan_lock, scan_state))
+        background_tasks.add(task)
+        task.add_done_callback(background_tasks.discard)
+        return JSONResponse(dict(scan_state), status_code=202)
 
     @app.get("/api/videos")
     async def videos(
@@ -370,21 +403,60 @@ def _require_writable(settings: Settings) -> None:
         raise HTTPException(status_code=403, detail="Public demo is read-only")
 
 
-def _require_drive_scan(settings: Settings, user: dict[str, Any] | None) -> None:
+def _require_drive_scan(settings: Settings, user: dict[str, Any] | None) -> str:
     _require_writable(settings)
-    if not user or not user.get("can_scan_drive"):
-        raise HTTPException(status_code=403, detail="Drive scan permission required")
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    folder_id = _configured_scan_folder_id(settings)
+    if not folder_id:
+        raise HTTPException(
+            status_code=503,
+            detail="Le dossier Drive de référence n'est pas configuré",
+        )
     if not settings.google_service_account_json.strip() and not settings.google_credentials_path.exists():
         raise HTTPException(status_code=503, detail="Google Drive credentials are not configured")
+    return folder_id
 
 
-def _can_scan_drive(settings: Settings, email: str) -> bool:
-    allowed = {
-        item.strip().casefold()
-        for item in settings.drive_scan_emails.split(",")
-        if item.strip()
-    }
-    return email.strip().casefold() in allowed
+def _configured_scan_folder_id(settings: Settings) -> str:
+    return _extract_folder_id(settings.drive_scan_folder_id.strip()) or ""
+
+
+async def _run_drive_scan(
+    settings: Settings,
+    folder_id: str,
+    scan_lock: asyncio.Lock,
+    scan_state: dict[str, Any],
+) -> None:
+    try:
+        result = await asyncio.to_thread(run_scan, settings, full=False, folder_id=folder_id)
+        scan_state.update(
+            {
+                "status": "succeeded",
+                "finished_at": _utc_now(),
+                "videos_found": result.videos_found,
+                "videos_indexed": result.videos_indexed,
+                "videos_skipped": result.videos_skipped,
+                "folders_scanned": result.folders_scanned,
+                "errors": result.errors,
+                "message": "Scan terminé",
+            }
+        )
+    except Exception:
+        LOGGER.exception("Online Drive scan failed")
+        scan_state.update(
+            {
+                "status": "failed",
+                "finished_at": _utc_now(),
+                "message": "Le scan Drive a échoué. Vérifiez la configuration Render.",
+            }
+        )
+    finally:
+        scan_lock.release()
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat()
 
 
 def _session_response(

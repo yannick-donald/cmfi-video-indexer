@@ -19,10 +19,12 @@ services:
       - key: OUTPUT_DIR
         value: /tmp/cmfi-video-indexer/output
       - key: PUBLIC_DEMO
-        value: "true"
+        value: "false"
       - key: READ_ONLY
         value: "false"
       - key: AUTO_SEED_DEMO
+        value: "false"
+      - key: PURGE_DEMO_DATA
         value: "true"
       - key: AUTH_REQUIRED
         value: "true"
@@ -52,7 +54,7 @@ services:
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
-      - key: DRIVE_SCAN_EMAILS
+      - key: DRIVE_SCAN_FOLDER_ID
         sync: false
       - key: GOOGLE_SERVICE_ACCOUNT_JSON
         sync: false

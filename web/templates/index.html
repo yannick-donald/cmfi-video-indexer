@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ app_name }} — Video Library</title>
-  <link rel="stylesheet" href="/static/style.css?v=treated-stage-1">
+  <link rel="stylesheet" href="/static/style.css?v=drive-scan-2">
 </head>
 <body data-public-demo="{{ 'true' if public_demo else 'false' }}" data-read-only="{{ 'true' if read_only else 'false' }}">
   <div class="app">
@@ -27,7 +27,7 @@
       {% if current_user %}
       <div class="account-menu">
         <span>{{ current_user.email }}</span>
-        {% if current_user.can_scan_drive %}<small>Scan Drive autorisé</small>{% endif %}
+        {% if drive_scan_configured %}<small>Scanner Drive disponible</small>{% endif %}
         <button id="logoutButton" type="button" class="btn-secondary">Déconnexion</button>
       </div>
       {% endif %}
@@ -187,19 +187,20 @@
           <label>Max duration (sec)<input id="maxDurationFilter" type="number" min="0" step="1"></label>
         </div>
 
-        {% if current_user and current_user.can_scan_drive %}
+        {% if current_user %}
         <hr class="filters-separator">
-        <h2>On-demand scan</h2>
+        <h2>Synchronisation Drive</h2>
+        {% if drive_scan_configured %}
         <p class="filters-help">
-          Paste a Google Drive <strong>folder URL or ID</strong> (works for My Drive, Shared drives,
-          and folders shared with you), then run a focused scan.
+          Recherche les nouvelles vidéos et les fichiers modifiés dans le dossier Dpt DIGITAL configuré.
         </p>
-        <label>
-          Folder URL or ID
-          <input id="scanFolderInput" type="text" placeholder="https://drive.google.com/drive/folders/...">
-        </label>
-        <button id="scanFolderButton" type="button">Scan this folder</button>
+        <button id="scanFolderButton" type="button">Lancer la synchronisation</button>
         <p id="scanFolderStatus" class="filters-status"></p>
+        {% else %}
+        <p class="filters-help">
+          Le dossier Drive doit être configuré par l’administrateur dans Render.
+        </p>
+        {% endif %}
         {% endif %}
       </aside>
 
@@ -247,6 +248,6 @@
     </form>
   </dialog>
 
-  <script src="/static/app.js?v=treated-stage-1"></script>
+  <script src="/static/app.js?v=drive-scan-2"></script>
 </body>
 </html>
