@@ -134,7 +134,17 @@ They are excluded by `.gitignore`.
 The repository includes a `render.yaml` Blueprint for an authenticated,
 multi-user deployment. Every registered user can search, label and edit video
 metadata. Every authenticated user can launch an incremental scan of one fixed
-Google Drive folder. Only the Render administrator can change that folder.
+Google Drive folder. Only the account matching `ADMIN_EMAIL` can change that
+folder from the application.
+
+The collaborative dashboard also provides:
+
+- quick views for newly indexed videos, incomplete records, missing labels and
+  cut videos without a raw source;
+- a completeness indicator for each video;
+- a viewer guide with the meaning of every production status;
+- normalized reusable labels and the e-mail of the last label editor;
+- a complete label change history in each video detail.
 
 The Render service uses a persistent disk for SQLite. Render persistent disks
 require a paid web service plan; the Blueprint uses the `starter` plan.
@@ -147,7 +157,6 @@ require a paid web service plan; the Blueprint uses the `starter` plan.
 4. Enter the secret environment variables requested by Render:
    - `ADMIN_EMAIL`: initial administrator e-mail.
    - `ADMIN_PASSWORD`: initial administrator password (8 characters minimum).
-   - `DRIVE_SCAN_FOLDER_ID`: URL or ID of the fixed `Dpt DIGITAL` folder.
    - `GOOGLE_SERVICE_ACCOUNT_JSON`: complete Google service account JSON.
    - `EMAIL_FROM`: verified sender address used for account confirmation.
    - `SMTP_HOST`: SMTP server supplied by the e-mail provider.
@@ -194,12 +203,16 @@ The health check is available at:
    service account e-mail (`client_email` in the JSON key).
 4. Paste the complete JSON key into Render as
    `GOOGLE_SERVICE_ACCOUNT_JSON`.
-5. Paste the shared folder URL or ID into `DRIVE_SCAN_FOLDER_ID`.
+5. Sign in with the account configured in `ADMIN_EMAIL`.
+6. Select **Configurer le dossier Drive**, then paste the shared folder URL or
+   search for a folder visible to the service account.
+7. Test access and save the single main folder.
 
 Sharing a folder with the service account exposes that folder and its
 subfolders to the application. It does not expose the user's entire Drive.
 Registered users can run the scan, but they cannot change the configured folder
-from the application.
+from the application. `DRIVE_SCAN_FOLDER_ID` remains available as an optional
+environment fallback for older deployments.
 
 The Render deployment disables demo seeding and removes existing records whose
 Drive ID starts with `demo-`. Incremental rescans add new videos and update

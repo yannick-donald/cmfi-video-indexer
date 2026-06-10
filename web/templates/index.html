@@ -4,9 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ app_name }} — Video Library</title>
-  <link rel="stylesheet" href="/static/style.css?v=drive-scan-2">
+  <link rel="stylesheet" href="/static/style.css?v=collaboration-4">
 </head>
-<body data-public-demo="{{ 'true' if public_demo else 'false' }}" data-read-only="{{ 'true' if read_only else 'false' }}">
+<body
+  data-public-demo="{{ 'true' if public_demo else 'false' }}"
+  data-read-only="{{ 'true' if read_only else 'false' }}"
+  data-super-admin="{{ 'true' if current_user and current_user.is_super_admin else 'false' }}"
+>
   <div class="app">
     {% if public_demo %}
     <div class="demo-notice">
@@ -27,8 +31,12 @@
       {% if current_user %}
       <div class="account-menu">
         <span>{{ current_user.email }}</span>
+        {% if current_user.is_super_admin %}<small>Super-administrateur</small>{% endif %}
         {% if drive_scan_configured %}<small>Scanner Drive disponible</small>{% endif %}
-        <button id="logoutButton" type="button" class="btn-secondary">Déconnexion</button>
+        <div class="account-actions">
+          <button id="helpButton" type="button" class="icon-button" title="Guide de visionnage" aria-label="Guide de visionnage">?</button>
+          <button id="logoutButton" type="button" class="btn-secondary">Déconnexion</button>
+        </div>
       </div>
       {% endif %}
     </header>
@@ -77,6 +85,20 @@
         <button class="workflow-card" type="button" data-filter-kind="workflow_stage" data-filter-value="published">
           <span class="workflow-label">Publiées</span>
           <strong id="workflowPublished">—</strong>
+        </button>
+      </div>
+      <div class="tracking-strip" id="trackingCards">
+        <button class="tracking-card" type="button" data-tracking="new">
+          <span>Nouvelles vidéos</span><strong id="trackingNew">—</strong>
+        </button>
+        <button class="tracking-card" type="button" data-tracking="incomplete">
+          <span>À compléter</span><strong id="trackingIncomplete">—</strong>
+        </button>
+        <button class="tracking-card" type="button" data-tracking="missing_labels">
+          <span>Sans labels</span><strong id="trackingMissingLabels">—</strong>
+        </button>
+        <button class="tracking-card" type="button" data-tracking="unlinked_cut">
+          <span>Découpées sans source</span><strong id="trackingUnlinkedCuts">—</strong>
         </button>
       </div>
     </section>
@@ -144,6 +166,17 @@
         </label>
 
         <label>
+          Suivi
+          <select id="trackingFilter">
+            <option value="">Toutes les vidéos</option>
+            <option value="new">Nouvelles vidéos</option>
+            <option value="incomplete">À compléter</option>
+            <option value="missing_labels">Sans labels</option>
+            <option value="unlinked_cut">Découpées sans source</option>
+          </select>
+        </label>
+
+        <label>
           Folder
           <select id="folderFilter"><option value="">All folders</option></select>
         </label>
@@ -192,14 +225,18 @@
         <h2>Synchronisation Drive</h2>
         {% if drive_scan_configured %}
         <p class="filters-help">
-          Recherche les nouvelles vidéos et les fichiers modifiés dans le dossier Dpt DIGITAL configuré.
+          Recherche les nouvelles vidéos et les fichiers modifiés dans
+          <strong>{{ drive_folder.folder_name or "le dossier configuré" }}</strong>.
         </p>
         <button id="scanFolderButton" type="button">Lancer la synchronisation</button>
         <p id="scanFolderStatus" class="filters-status"></p>
         {% else %}
         <p class="filters-help">
-          Le dossier Drive doit être configuré par l’administrateur dans Render.
+          Le dossier Drive doit être configuré par le super-administrateur.
         </p>
+        {% endif %}
+        {% if current_user.is_super_admin %}
+        <button id="openDriveConfigButton" type="button" class="btn-secondary">Configurer le dossier Drive</button>
         {% endif %}
         {% endif %}
       </aside>
@@ -248,6 +285,84 @@
     </form>
   </dialog>
 
-  <script src="/static/app.js?v=drive-scan-2"></script>
+  <dialog id="helpDialog" class="wide-dialog">
+    <form method="dialog">
+      <article>
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">Guide de visionnage</p>
+            <h2>Comment traiter une vidéo</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Fermer">×</button>
+        </div>
+        <div class="guide-layout">
+          <section>
+            <h3>Étapes du visionnage</h3>
+            <ol>
+              <li>Vérifier que la vidéo, le son et l’image sont lisibles.</li>
+              <li>Identifier le type : vidéo brute ou vidéo découpée.</li>
+              <li>Associer une vidéo découpée à sa vidéo brute.</li>
+              <li>Renseigner le titre, le thème et l’intervenant.</li>
+              <li>Réutiliser les labels existants avant d’en créer un nouveau.</li>
+              <li>Changer le statut seulement lorsque l’étape est réellement terminée.</li>
+            </ol>
+          </section>
+          <section>
+            <h3>Signification des statuts</h3>
+            <dl class="status-guide">
+              <dt>Numérisée</dt><dd>Cassette convertie en fichier vidéo sur Drive.</dd>
+              <dt>À visionner</dt><dd>Contenu à identifier et métadonnées à compléter.</dd>
+              <dt>Transcrite</dt><dd>Une transcription du contenu est disponible.</dd>
+              <dt>Traitée</dt><dd>Le son ou l’image a bénéficié d’une amélioration technique.</dd>
+              <dt>Prête montage</dt><dd>Le contenu est validé et exploitable pour le montage.</dd>
+              <dt>Publiée</dt><dd>La vidéo finalisée a été mise en ligne.</dd>
+            </dl>
+          </section>
+        </div>
+      </article>
+    </form>
+  </dialog>
+
+  {% if current_user and current_user.is_super_admin %}
+  <dialog id="driveConfigDialog" class="wide-dialog">
+    <form method="dialog">
+      <article>
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">Super-administration</p>
+            <h2>Dossier Drive principal</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Fermer">×</button>
+        </div>
+        <div id="driveCurrentFolder" class="drive-current-folder"></div>
+        <div class="drive-config-grid">
+          <section>
+            <h3>Ajouter par lien</h3>
+            <label class="metadata-field">
+              <span>URL ou identifiant du dossier</span>
+              <input id="driveFolderInput" type="text" placeholder="https://drive.google.com/drive/folders/...">
+            </label>
+            <div class="button-row">
+              <button id="testDriveFolderButton" type="button" class="btn-secondary">Tester l’accès</button>
+              <button id="saveDriveFolderButton" type="button">Utiliser ce dossier</button>
+            </div>
+            <p id="driveConfigStatus" class="filters-status"></p>
+          </section>
+          <section>
+            <h3>Rechercher un dossier</h3>
+            <div class="drive-search-row">
+              <input id="driveFolderSearchInput" type="search" placeholder="Nom du dossier">
+              <button id="searchDriveFoldersButton" type="button">Rechercher</button>
+            </div>
+            <div id="driveFolderSearchResults" class="drive-search-results"></div>
+          </section>
+        </div>
+      </article>
+    </form>
+  </dialog>
+  {% endif %}
+
+  <datalist id="labelSuggestions"></datalist>
+  <script src="/static/app.js?v=collaboration-4"></script>
 </body>
 </html>

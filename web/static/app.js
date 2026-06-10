@@ -3,11 +3,13 @@ const state = {
   pageSize: 50,
   debounceTimer: null,
   view: "production",
+  labels: [],
 };
 
 const appMode = {
   publicDemo: document.body.dataset.publicDemo === "true",
   readOnly: document.body.dataset.readOnly === "true",
+  superAdmin: document.body.dataset.superAdmin === "true",
 };
 
 const workflowLabels = {
@@ -38,6 +40,7 @@ const els = {
   assetTypeFilter: document.getElementById("assetTypeFilter"),
   workflowStageFilter: document.getElementById("workflowStageFilter"),
   labelFilter: document.getElementById("labelFilter"),
+  trackingFilter: document.getElementById("trackingFilter"),
   minSizeFilter: document.getElementById("minSizeFilter"),
   maxSizeFilter: document.getElementById("maxSizeFilter"),
   minDurationFilter: document.getElementById("minDurationFilter"),
@@ -67,7 +70,25 @@ const els = {
   workflowTreated: document.getElementById("workflowTreated"),
   workflowReadyEdit: document.getElementById("workflowReadyEdit"),
   workflowPublished: document.getElementById("workflowPublished"),
+  trackingNew: document.getElementById("trackingNew"),
+  trackingIncomplete: document.getElementById("trackingIncomplete"),
+  trackingMissingLabels: document.getElementById("trackingMissingLabels"),
+  trackingUnlinkedCuts: document.getElementById("trackingUnlinkedCuts"),
+  trackingCards: document.getElementById("trackingCards"),
   logoutButton: document.getElementById("logoutButton"),
+  helpButton: document.getElementById("helpButton"),
+  helpDialog: document.getElementById("helpDialog"),
+  openDriveConfigButton: document.getElementById("openDriveConfigButton"),
+  driveConfigDialog: document.getElementById("driveConfigDialog"),
+  driveCurrentFolder: document.getElementById("driveCurrentFolder"),
+  driveFolderInput: document.getElementById("driveFolderInput"),
+  testDriveFolderButton: document.getElementById("testDriveFolderButton"),
+  saveDriveFolderButton: document.getElementById("saveDriveFolderButton"),
+  driveConfigStatus: document.getElementById("driveConfigStatus"),
+  driveFolderSearchInput: document.getElementById("driveFolderSearchInput"),
+  searchDriveFoldersButton: document.getElementById("searchDriveFoldersButton"),
+  driveFolderSearchResults: document.getElementById("driveFolderSearchResults"),
+  labelSuggestions: document.getElementById("labelSuggestions"),
 };
 
 function buildQueryParams() {
@@ -89,6 +110,7 @@ function buildQueryParams() {
   add("asset_type", els.assetTypeFilter.value);
   add("workflow_stage", els.workflowStageFilter.value);
   add("label", els.labelFilter.value);
+  add("tracking", els.trackingFilter.value);
   add("min_size_mb", els.minSizeFilter.value);
   add("max_size_mb", els.maxSizeFilter.value);
   add("min_duration_sec", els.minDurationFilter.value);
@@ -133,6 +155,11 @@ async function loadWorkflowStats() {
   els.workflowTreated.textContent = (stages.treated || 0).toLocaleString();
   els.workflowReadyEdit.textContent = (stages.ready_edit || 0).toLocaleString();
   els.workflowPublished.textContent = (stages.published || 0).toLocaleString();
+  const tracking = data.tracking || {};
+  els.trackingNew.textContent = (tracking.new_count || 0).toLocaleString();
+  els.trackingIncomplete.textContent = (tracking.incomplete || 0).toLocaleString();
+  els.trackingMissingLabels.textContent = (tracking.missing_labels || 0).toLocaleString();
+  els.trackingUnlinkedCuts.textContent = (tracking.unlinked_cuts || 0).toLocaleString();
 }
 
 async function loadFilters() {
@@ -144,6 +171,7 @@ async function loadFilters() {
   fillSelect(els.yearFilter, data.years, "All years");
   fillSelect(els.sharedDriveFilter, data.shared_drives, "All drives");
   const selectedLabel = els.labelFilter.value;
+  state.labels = data.labels || [];
   els.labelFilter.innerHTML = `<option value="">Tous les labels</option>`;
   (data.labels || []).forEach((label) => {
     const option = document.createElement("option");
@@ -152,6 +180,11 @@ async function loadFilters() {
     els.labelFilter.appendChild(option);
   });
   els.labelFilter.value = selectedLabel;
+  if (els.labelSuggestions) {
+    els.labelSuggestions.innerHTML = state.labels
+      .map((label) => `<option value="${escapeAttr(label.name)}"></option>`)
+      .join("");
+  }
 }
 
 function renderRows(items) {
@@ -166,9 +199,14 @@ function renderRows(items) {
       <tr>
         <td>
           <div class="file-name">${escapeHtml(item.editorial_title || item.clean_title || item.file_name)}</div>
+          <div class="row-badges">
+            ${item.is_new ? '<span class="new-badge">Nouvelle</span>' : ""}
+            <span class="completion-badge completion-${escapeHtml(item.completeness.status)}">${escapeHtml(item.completeness.label)}</span>
+          </div>
           ${item.editorial_title || item.clean_title ? `<div class="folder-path">${escapeHtml(item.file_name)}</div>` : ""}
           <div class="folder-path">${escapeHtml(item.owner || "Unknown owner")}</div>
           ${renderLabelBadges(item.labels || [])}
+          ${item.last_label_edit ? `<div class="label-edit-by">Labels : ${escapeHtml(item.last_label_edit.user_email)} · ${escapeHtml(formatDate(item.last_label_edit.created_at))}</div>` : ""}
         </td>
         <td><div class="folder-path">${escapeHtml(item.folder_path || "—")}</div></td>
         <td>
@@ -260,11 +298,34 @@ function renderLabelEditor(item) {
       <p class="metadata-hint">Ajoute plusieurs labels séparés par des points-virgules.</p>
       <label class="metadata-field">
         <span>Labels</span>
-        <input id="videoLabelsInput" type="text" value="${escapeAttr(value)}" placeholder="prioritaire; audio à nettoyer; chant" ${appMode.readOnly ? "disabled" : ""}>
+        <input id="videoLabelsInput" list="labelSuggestions" type="text" value="${escapeAttr(value)}" placeholder="prioritaire; audio à nettoyer; chant" ${appMode.readOnly ? "disabled" : ""}>
       </label>
       <div id="videoLabelPreview" class="video-labels">${renderLabelChips(item.labels || [])}</div>
+      <div id="labelHistoryContainer">${renderLabelHistory(item.label_history || [])}</div>
       <p id="labelsSaveStatus" class="filters-status"></p>
     </section>`;
+}
+
+function renderLabelHistory(history) {
+  if (!history.length) {
+    return `<p class="metadata-hint">Aucune modification de labels enregistrée.</p>`;
+  }
+  return `
+    <div class="label-history">
+      <h4>Historique des labels</h4>
+      ${history.map((entry) => {
+        const changes = [
+          entry.added_labels.length ? `Ajout : ${entry.added_labels.join(", ")}` : "",
+          entry.removed_labels.length ? `Retrait : ${entry.removed_labels.join(", ")}` : "",
+        ].filter(Boolean).join(" · ");
+        return `
+          <div class="label-history-entry">
+            <strong>${escapeHtml(entry.user_email)}</strong>
+            <span>${escapeHtml(formatDate(entry.created_at))}</span>
+            <p>${escapeHtml(changes || "Liste enregistrée")}</p>
+          </div>`;
+      }).join("")}
+    </div>`;
 }
 
 async function saveLabels() {
@@ -289,8 +350,9 @@ async function saveLabels() {
     }
     const data = await response.json();
     document.getElementById("videoLabelPreview").innerHTML = renderLabelChips(data.labels);
+    document.getElementById("labelHistoryContainer").innerHTML = renderLabelHistory(data.label_history || []);
     status.textContent = "Labels enregistrés.";
-    await Promise.all([loadVideos(), loadFilters()]);
+    await Promise.all([loadVideos(), loadFilters(), loadWorkflowStats()]);
   } catch (error) {
     status.textContent = `Échec : ${error.message}`;
   } finally {
@@ -482,7 +544,7 @@ async function saveMetadata() {
     }
     const item = await response.json();
     status.textContent = "Metadata saved.";
-    await Promise.all([loadVideos(), loadStats(), loadFilters()]);
+    await Promise.all([loadVideos(), loadStats(), loadWorkflowStats(), loadFilters()]);
     const termsContainer = els.detailContent.querySelector(".term-list");
     if (termsContainer) {
       termsContainer.innerHTML = (item.lexicon_terms || [])
@@ -534,6 +596,7 @@ function resetFilters() {
     els.assetTypeFilter,
     els.workflowStageFilter,
     els.labelFilter,
+    els.trackingFilter,
   ].forEach((select) => {
     select.value = "";
   });
@@ -545,6 +608,7 @@ function resetFilters() {
   document.querySelectorAll(".workflow-card").forEach((card) => {
     card.classList.toggle("active", card.dataset.filterKind === "all");
   });
+  document.querySelectorAll(".tracking-card").forEach((card) => card.classList.remove("active"));
   state.page = 1;
   loadVideos();
 }
@@ -577,6 +641,7 @@ function syncWorkflowCardSelection() {
   els.assetTypeFilter,
   els.workflowStageFilter,
   els.labelFilter,
+  els.trackingFilter,
   els.minSizeFilter,
   els.maxSizeFilter,
   els.minDurationFilter,
@@ -608,6 +673,24 @@ els.workflowCards.addEventListener("click", (event) => {
   document.querySelectorAll(".workflow-card").forEach((item) => item.classList.toggle("active", item === card));
   state.page = 1;
   loadVideos();
+});
+
+els.trackingCards.addEventListener("click", (event) => {
+  const card = event.target.closest(".tracking-card");
+  if (!card) return;
+  const nextValue = els.trackingFilter.value === card.dataset.tracking ? "" : card.dataset.tracking;
+  els.trackingFilter.value = nextValue;
+  document.querySelectorAll(".tracking-card").forEach((item) => {
+    item.classList.toggle("active", item.dataset.tracking === nextValue);
+  });
+  state.page = 1;
+  loadVideos();
+});
+
+els.trackingFilter.addEventListener("change", () => {
+  document.querySelectorAll(".tracking-card").forEach((card) => {
+    card.classList.toggle("active", card.dataset.tracking === els.trackingFilter.value);
+  });
 });
 
 els.resetFilters.addEventListener("click", resetFilters);
@@ -709,6 +792,105 @@ if (els.logoutButton) {
   els.logoutButton.addEventListener("click", async () => {
     await fetch("/api/auth/logout", { method: "POST" });
     window.location.href = "/login";
+  });
+}
+
+if (els.helpButton && els.helpDialog) {
+  els.helpButton.addEventListener("click", () => els.helpDialog.showModal());
+}
+
+async function loadDriveConfig() {
+  const response = await fetch("/api/admin/drive-folder");
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+  const folderName = data.folder_name || data.folder_id || "Aucun dossier configuré";
+  els.driveCurrentFolder.innerHTML = `
+    <strong>${escapeHtml(folderName)}</strong>
+    ${data.folder_url ? `<a href="${escapeAttr(data.folder_url)}" target="_blank" rel="noopener">Ouvrir dans Drive</a>` : ""}
+    <span>${data.updated_by_email ? `Configuré par ${escapeHtml(data.updated_by_email)} · ${escapeHtml(formatDate(data.updated_at))}` : "Aucune configuration enregistrée dans l’application"}</span>
+    ${data.last_scan_at ? `<span>Dernière synchronisation : ${escapeHtml(formatDate(data.last_scan_at))} · ${escapeHtml(data.last_scan_status || "")}</span>` : ""}
+  `;
+  els.driveFolderInput.value = data.folder_url || data.folder_id || "";
+}
+
+async function testDriveFolder(value) {
+  const response = await fetch("/api/admin/drive-folder/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ folder_url_or_id: value }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+  return data;
+}
+
+if (appMode.superAdmin && els.openDriveConfigButton) {
+  els.openDriveConfigButton.addEventListener("click", async () => {
+    els.driveConfigDialog.showModal();
+    els.driveConfigStatus.textContent = "";
+    try {
+      await loadDriveConfig();
+    } catch (error) {
+      els.driveConfigStatus.textContent = error.message;
+    }
+  });
+
+  els.testDriveFolderButton.addEventListener("click", async () => {
+    els.driveConfigStatus.textContent = "Vérification de l’accès...";
+    try {
+      const folder = await testDriveFolder(els.driveFolderInput.value);
+      els.driveConfigStatus.textContent = `Accès confirmé : ${folder.folder_name}`;
+    } catch (error) {
+      els.driveConfigStatus.textContent = error.message;
+    }
+  });
+
+  els.saveDriveFolderButton.addEventListener("click", async () => {
+    const value = els.driveFolderInput.value.trim();
+    if (!value) {
+      els.driveConfigStatus.textContent = "Saisis une URL ou un identifiant Drive.";
+      return;
+    }
+    if (!window.confirm("Remplacer le dossier Drive principal par ce dossier ?")) return;
+    els.driveConfigStatus.textContent = "Vérification et enregistrement...";
+    const response = await fetch("/api/admin/drive-folder", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folder_url_or_id: value }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      els.driveConfigStatus.textContent = data.detail || `HTTP ${response.status}`;
+      return;
+    }
+    els.driveConfigStatus.textContent = `Dossier principal enregistré : ${data.folder_name}`;
+    await loadDriveConfig();
+    window.setTimeout(() => window.location.reload(), 700);
+  });
+
+  els.searchDriveFoldersButton.addEventListener("click", async () => {
+    const query = els.driveFolderSearchInput.value.trim();
+    if (!query) return;
+    els.driveFolderSearchResults.innerHTML = `<p class="filters-status">Recherche...</p>`;
+    const response = await fetch(`/api/admin/drive-folders/search?q=${encodeURIComponent(query)}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      els.driveFolderSearchResults.innerHTML = `<p class="filters-status">${escapeHtml(data.detail || `HTTP ${response.status}`)}</p>`;
+      return;
+    }
+    els.driveFolderSearchResults.innerHTML = (data.items || []).map((folder) => `
+      <button type="button" class="drive-folder-result" data-folder-url="${escapeAttr(folder.folder_url)}">
+        <strong>${escapeHtml(folder.folder_name)}</strong>
+        <span>${folder.shared_drive ? "Drive partagé" : "Dossier partagé"}</span>
+      </button>
+    `).join("") || `<p class="filters-status">Aucun dossier trouvé.</p>`;
+  });
+
+  els.driveFolderSearchResults.addEventListener("click", (event) => {
+    const result = event.target.closest(".drive-folder-result");
+    if (!result) return;
+    els.driveFolderInput.value = result.dataset.folderUrl;
+    els.driveConfigStatus.textContent = "Dossier sélectionné. Teste l’accès puis enregistre.";
   });
 }
 

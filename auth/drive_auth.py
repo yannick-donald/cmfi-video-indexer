@@ -50,6 +50,7 @@ def authenticate(
     token_path: Path,
     scopes: Sequence[str] = DRIVE_SCOPES,
     service_account_json: str = "",
+    allow_interactive: bool = True,
 ) -> Credentials:
     if service_account_json.strip():
         try:
@@ -78,6 +79,12 @@ def authenticate(
             return creds
         except Exception as e:
             LOGGER.warning("Token refresh failed; re-authenticating", extra={"error": str(e)})
+
+    if not allow_interactive:
+        raise AuthError(
+            "No usable Google token is available. Configure a service account "
+            "for the hosted application."
+        )
 
     try:
         flow = InstalledAppFlow.from_client_secrets_file(str(credentials_path), scopes=list(scopes))

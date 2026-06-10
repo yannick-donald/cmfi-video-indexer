@@ -57,6 +57,8 @@ class VideoRecord:
     source_file_id: str = ""
     workflow_notes: str = ""
     workflow_updated_at: str = ""
+    first_seen_at: str = ""
+    reviewed_at: str = ""
     duration_seconds: float | None = None
     width: int | None = None
     height: int | None = None
@@ -128,6 +130,8 @@ class VideoRecord:
             source_file_id=row["source_file_id"] or "",
             workflow_notes=row["workflow_notes"] or "",
             workflow_updated_at=row["workflow_updated_at"] or "",
+            first_seen_at=row["first_seen_at"] or "",
+            reviewed_at=row["reviewed_at"] or "",
             duration_seconds=row["duration_seconds"],
             width=row["width"],
             height=row["height"],
@@ -199,6 +203,8 @@ class VideoRecord:
             "source_file_id": self.source_file_id,
             "workflow_notes": self.workflow_notes,
             "workflow_updated_at": self.workflow_updated_at,
+            "first_seen_at": self.first_seen_at,
+            "reviewed_at": self.reviewed_at,
             "duration_seconds": self.duration_seconds,
             "width": self.width,
             "height": self.height,

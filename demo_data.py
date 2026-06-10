@@ -109,6 +109,21 @@ def seed_public_demo(repo: VideoRepository) -> None:
     for video in samples:
         repo.upsert_video(video)
 
-    repo.set_video_labels("demo-raw-002", ["A visionner", "Prioritaire"])
-    repo.set_video_labels("demo-cut-001", ["Audio nettoye", "Image restauree"])
-    repo.set_video_labels("demo-cut-003", ["Publiee", "Extrait court"])
+    repo.set_video_labels(
+        "demo-raw-002",
+        ["A visionner", "Prioritaire"],
+        user_id=None,
+        user_email="demo@local",
+    )
+    repo.set_video_labels(
+        "demo-cut-001",
+        ["Audio nettoye", "Image restauree"],
+        user_id=None,
+        user_email="demo@local",
+    )
+    repo.set_video_labels(
+        "demo-cut-003",
+        ["Publiee", "Extrait court"],
+        user_id=None,
+        user_email="demo@local",
+    )

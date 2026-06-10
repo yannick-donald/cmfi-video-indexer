@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+import json
+import unicodedata
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -80,6 +82,8 @@ PRESERVE_ON_RESCAN = CHRISTIAN_METADATA_FIELDS | {
     "source_file_id",
     "workflow_notes",
     "workflow_updated_at",
+    "first_seen_at",
+    "reviewed_at",
 }
 
 
@@ -99,6 +103,7 @@ class SearchFilters:
     asset_type: str = ""
     workflow_stage: str = ""
     label: str = ""
+    tracking: str = ""
 
 
 @dataclass(slots=True)
@@ -277,6 +282,7 @@ class VideoRepository:
             else:
                 allowed[key] = str(value or "").strip()
         allowed["metadata_updated_at"] = self._now_sql_expr()
+        allowed["reviewed_at"] = self._now_sql_expr()
 
         assignments = ", ".join(f"{key} = ?" for key in allowed)
         with self._connect() as conn:
@@ -324,7 +330,8 @@ class VideoRepository:
                 """
                 UPDATE videos
                 SET asset_type = ?, workflow_stage = ?, source_file_id = ?,
-                    workflow_notes = ?, workflow_updated_at = datetime('now')
+                    workflow_notes = ?, workflow_updated_at = datetime('now'),
+                    reviewed_at = datetime('now')
                 WHERE file_id = ?
                 """,
                 (asset_type, workflow_stage, source_file_id, workflow_notes, file_id),
@@ -430,12 +437,19 @@ class VideoRepository:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def set_video_labels(self, file_id: str, names: list[str]) -> list[dict[str, Any]] | None:
+    def set_video_labels(
+        self,
+        file_id: str,
+        names: list[str],
+        *,
+        user_id: int | None,
+        user_email: str,
+    ) -> list[dict[str, Any]] | None:
         clean_names: list[tuple[str, str]] = []
         seen: set[str] = set()
         for raw_name in names:
             name = " ".join(str(raw_name).strip().split())
-            normalized = name.casefold()
+            normalized = _normalize_label(name)
             if not name or normalized in seen:
                 continue
             seen.add(normalized)
@@ -444,6 +458,17 @@ class VideoRepository:
         with self._connect() as conn:
             if not conn.execute("SELECT 1 FROM videos WHERE file_id = ?", (file_id,)).fetchone():
                 return None
+            before_rows = conn.execute(
+                """
+                SELECT l.name
+                FROM video_labels vl
+                JOIN labels l ON l.id = vl.label_id
+                WHERE vl.file_id = ?
+                ORDER BY l.name COLLATE NOCASE
+                """,
+                (file_id,),
+            ).fetchall()
+            before = [str(row["name"]) for row in before_rows]
             conn.execute("DELETE FROM video_labels WHERE file_id = ?", (file_id,))
             for name, normalized in clean_names:
                 conn.execute(
@@ -461,8 +486,197 @@ class VideoRepository:
             conn.execute(
                 "DELETE FROM labels WHERE id NOT IN (SELECT DISTINCT label_id FROM video_labels)"
             )
+            after = [name for name, _ in clean_names]
+            before_keys = {_normalize_label(name): name for name in before}
+            after_keys = {_normalize_label(name): name for name in after}
+            if set(before_keys) != set(after_keys):
+                conn.execute(
+                    """
+                    INSERT INTO video_label_history(
+                        file_id, user_id, user_email, before_labels, after_labels,
+                        added_labels, removed_labels
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        file_id,
+                        user_id,
+                        user_email,
+                        json.dumps(before, ensure_ascii=False),
+                        json.dumps(after, ensure_ascii=False),
+                        json.dumps(
+                            [after_keys[key] for key in after_keys.keys() - before_keys.keys()],
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            [before_keys[key] for key in before_keys.keys() - after_keys.keys()],
+                            ensure_ascii=False,
+                        ),
+                    ),
+                )
+            conn.execute(
+                "UPDATE videos SET reviewed_at = datetime('now') WHERE file_id = ?",
+                (file_id,),
+            )
             conn.commit()
         return self.get_video_labels(file_id)
+
+    def get_label_history(self, file_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, user_email, before_labels, after_labels,
+                       added_labels, removed_labels, created_at
+                FROM video_label_history
+                WHERE file_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (file_id, limit),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "user_email": row["user_email"],
+                "before_labels": json.loads(row["before_labels"]),
+                "after_labels": json.loads(row["after_labels"]),
+                "added_labels": json.loads(row["added_labels"]),
+                "removed_labels": json.loads(row["removed_labels"]),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def get_latest_label_edits(self, file_ids: list[str]) -> dict[str, dict[str, Any]]:
+        if not file_ids:
+            return {}
+        placeholders = ",".join("?" for _ in file_ids)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT h.file_id, h.user_email, h.created_at
+                FROM video_label_history h
+                JOIN (
+                    SELECT file_id, MAX(id) AS max_id
+                    FROM video_label_history
+                    WHERE file_id IN ({placeholders})
+                    GROUP BY file_id
+                ) latest ON latest.max_id = h.id
+                """,
+                file_ids,
+            ).fetchall()
+        return {
+            row["file_id"]: {
+                "user_email": row["user_email"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        }
+
+    def get_drive_folder_setting(self) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT key, value, updated_by_email, updated_at
+                FROM app_settings
+                WHERE key IN (
+                    'drive_folder_id', 'drive_folder_name', 'drive_folder_url',
+                    'drive_last_scan_at', 'drive_last_scan_status'
+                )
+                """
+            ).fetchall()
+        if not rows:
+            return None
+        values = {row["key"]: row["value"] for row in rows}
+        folder_rows = [
+            row
+            for row in rows
+            if row["key"] in {"drive_folder_id", "drive_folder_name", "drive_folder_url"}
+        ]
+        latest = max(folder_rows or rows, key=lambda row: row["updated_at"] or "")
+        return {
+            "folder_id": values.get("drive_folder_id", ""),
+            "folder_name": values.get("drive_folder_name", ""),
+            "folder_url": values.get("drive_folder_url", ""),
+            "last_scan_at": values.get("drive_last_scan_at", ""),
+            "last_scan_status": values.get("drive_last_scan_status", ""),
+            "updated_by_email": latest["updated_by_email"] or "",
+            "updated_at": latest["updated_at"] or "",
+        }
+
+    def set_drive_folder_setting(
+        self,
+        *,
+        folder_id: str,
+        folder_name: str,
+        folder_url: str,
+        user_email: str,
+    ) -> dict[str, Any]:
+        with self._connect() as conn:
+            for key, value in (
+                ("drive_folder_id", folder_id),
+                ("drive_folder_name", folder_name),
+                ("drive_folder_url", folder_url),
+            ):
+                conn.execute(
+                    """
+                    INSERT INTO app_settings(key, value, updated_by_email, updated_at)
+                    VALUES(?, ?, ?, datetime('now'))
+                    ON CONFLICT(key) DO UPDATE SET
+                        value = excluded.value,
+                        updated_by_email = excluded.updated_by_email,
+                        updated_at = excluded.updated_at
+                    """,
+                    (key, value, user_email),
+                )
+            conn.commit()
+        return self.get_drive_folder_setting() or {}
+
+    def record_drive_scan(self, *, status: str, scanned_at: str) -> None:
+        with self._connect() as conn:
+            for key, value in (
+                ("drive_last_scan_status", status),
+                ("drive_last_scan_at", scanned_at),
+            ):
+                conn.execute(
+                    """
+                    INSERT INTO app_settings(key, value, updated_at)
+                    VALUES(?, ?, datetime('now'))
+                    ON CONFLICT(key) DO UPDATE SET
+                        value = excluded.value,
+                        updated_at = excluded.updated_at
+                    """,
+                    (key, value),
+                )
+            conn.commit()
+
+    def get_tracking_stats(self) -> dict[str, int]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    SUM(CASE WHEN reviewed_at IS NULL OR reviewed_at = '' THEN 1 ELSE 0 END) AS new_count,
+                    SUM(CASE WHEN NOT EXISTS (
+                        SELECT 1 FROM video_labels vl WHERE vl.file_id = videos.file_id
+                    ) THEN 1 ELSE 0 END) AS missing_labels,
+                    SUM(CASE WHEN asset_type = 'cut'
+                        AND (source_file_id IS NULL OR source_file_id = '') THEN 1 ELSE 0 END
+                    ) AS unlinked_cuts,
+                    SUM(CASE WHEN
+                        reviewed_at IS NULL OR reviewed_at = ''
+                        OR editorial_title IS NULL OR editorial_title = ''
+                        OR main_theme IS NULL OR main_theme = ''
+                        OR (
+                            (speaker IS NULL OR speaker = '')
+                            AND (preacher IS NULL OR preacher = '')
+                        )
+                        OR NOT EXISTS (
+                            SELECT 1 FROM video_labels vl WHERE vl.file_id = videos.file_id
+                        )
+                    THEN 1 ELSE 0 END) AS incomplete
+                FROM videos
+                """
+            ).fetchone()
+        return {key: int(row[key] or 0) for key in row.keys()}
 
     def get_labels_map(self, file_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
         if not file_ids:
@@ -869,7 +1083,35 @@ class VideoRepository:
                 )
                 """
             )
-            params.append(filters.label.casefold())
+            params.append(_normalize_label(filters.label))
+
+        if filters.tracking == "new":
+            clauses.append("(reviewed_at IS NULL OR reviewed_at = '')")
+        elif filters.tracking == "missing_labels":
+            clauses.append(
+                "NOT EXISTS (SELECT 1 FROM video_labels vl WHERE vl.file_id = videos.file_id)"
+            )
+        elif filters.tracking == "unlinked_cut":
+            clauses.append(
+                "asset_type = 'cut' AND (source_file_id IS NULL OR source_file_id = '')"
+            )
+        elif filters.tracking == "incomplete":
+            clauses.append(
+                """
+                (
+                    reviewed_at IS NULL OR reviewed_at = ''
+                    OR editorial_title IS NULL OR editorial_title = ''
+                    OR main_theme IS NULL OR main_theme = ''
+                    OR (
+                        (speaker IS NULL OR speaker = '')
+                        AND (preacher IS NULL OR preacher = '')
+                    )
+                    OR NOT EXISTS (
+                        SELECT 1 FROM video_labels vl WHERE vl.file_id = videos.file_id
+                    )
+                )
+                """
+            )
 
         if filters.min_size_mb is not None:
             clauses.append("file_size >= ?")
@@ -911,6 +1153,12 @@ def _split_terms(value: str) -> list[str]:
         seen.add(key)
         out.append(term)
     return out
+
+
+def _normalize_label(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value.casefold())
+    without_accents = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return " ".join(without_accents.split())
 
 
 def _normalize_term(value: str) -> str:

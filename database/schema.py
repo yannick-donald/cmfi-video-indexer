@@ -139,6 +139,26 @@ def _migrate(conn: sqlite3.Connection) -> None:
     ]:
         _add_column_if_missing(conn, "videos", col, sql_type)
 
+    video_columns = _table_columns(conn, "videos")
+    if "first_seen_at" not in video_columns:
+        conn.execute("ALTER TABLE videos ADD COLUMN first_seen_at TEXT")
+        conn.execute("UPDATE videos SET first_seen_at = CURRENT_TIMESTAMP")
+    if "reviewed_at" not in video_columns:
+        conn.execute("ALTER TABLE videos ADD COLUMN reviewed_at TEXT")
+        # Existing records predate the new-video workflow and should not all
+        # appear as newly discovered after deployment.
+        conn.execute("UPDATE videos SET reviewed_at = CURRENT_TIMESTAMP")
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_videos_first_seen
+        AFTER INSERT ON videos
+        WHEN NEW.first_seen_at IS NULL OR NEW.first_seen_at = ''
+        BEGIN
+            UPDATE videos SET first_seen_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+        END
+        """
+    )
+
     conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_internal_video_id ON videos(internal_video_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_speaker ON videos(speaker)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_preacher ON videos(preacher)")
@@ -221,6 +241,27 @@ def _migrate(conn: sqlite3.Connection) -> None:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_video_labels_file_id ON video_labels(file_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_video_labels_label_id ON video_labels(label_id)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS video_label_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_id TEXT NOT NULL,
+            user_id INTEGER,
+            user_email TEXT NOT NULL,
+            before_labels TEXT NOT NULL,
+            after_labels TEXT NOT NULL,
+            added_labels TEXT NOT NULL,
+            removed_labels TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(file_id) REFERENCES videos(file_id) ON DELETE CASCADE,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_video_label_history_file_id "
+        "ON video_label_history(file_id, created_at DESC)"
+    )
 
     # 5) Local users and authenticated browser sessions.
     conn.execute(
@@ -270,6 +311,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_email_verification_expires_at "
         "ON email_verification_codes(expires_at)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_by_email TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
     )
 
     # 6) Full-text search index (FTS5) for enriched fields

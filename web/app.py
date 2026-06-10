@@ -15,6 +15,9 @@ from auth.email_sender import EmailDeliveryError, EmailSender
 from database.auth import AuthError, AuthRepository
 from database.repository import SearchFilters, VideoRepository
 from demo_data import seed_public_demo
+from auth.drive_auth import authenticate
+from drive_scanner.client import build_drive_service
+from drive_scanner.scanner import FOLDER_MIME
 from drive_scanner.runner import run_scan
 from utils.config import Settings
 from utils.formatters import format_bytes, format_duration
@@ -67,7 +70,8 @@ def create_app(settings: Settings) -> FastAPI:
         token = request.cookies.get(settings.session_cookie_name, "")
         user = auth_repo.get_session_user(token) if token else None
         if user:
-            user["can_scan_drive"] = bool(_configured_scan_folder_id(settings))
+            user["is_super_admin"] = _is_super_admin(settings, str(user["email"]))
+            user["can_scan_drive"] = bool(_configured_scan_folder_id(repo, settings))
         request.state.user = user
         if settings.auth_required and not public_path and not user:
             if request.url.path.startswith("/api/"):
@@ -192,7 +196,8 @@ def create_app(settings: Settings) -> FastAPI:
                 "read_only": settings.read_only,
                 "auth_required": settings.auth_required,
                 "current_user": request.state.user,
-                "drive_scan_configured": bool(_configured_scan_folder_id(settings)),
+                "drive_scan_configured": bool(_configured_scan_folder_id(repo, settings)),
+                "drive_folder": _drive_folder_payload(repo, settings),
             },
         )
 
@@ -222,7 +227,7 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.get("/api/workflow/stats")
     async def workflow_stats() -> dict[str, Any]:
-        return repo.get_workflow_stats()
+        return {**repo.get_workflow_stats(), "tracking": repo.get_tracking_stats()}
 
     @app.get("/api/workflow/raw-videos")
     async def raw_video_options(exclude_file_id: str = Query(default="")) -> dict[str, Any]:
@@ -230,12 +235,12 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.get("/api/scan-folder/status")
     async def scan_folder_status(request: Request) -> dict[str, Any]:
-        _require_drive_scan(settings, request.state.user)
+        _require_drive_scan(repo, settings, request.state.user)
         return dict(scan_state)
 
     @app.post("/api/scan-folder")
     async def scan_folder(request: Request) -> JSONResponse:
-        folder_id = _require_drive_scan(settings, request.state.user)
+        folder_id = _require_drive_scan(repo, settings, request.state.user)
         if scan_lock.locked():
             return JSONResponse(
                 {"detail": "Un scan Drive est déjà en cours", **scan_state},
@@ -261,6 +266,76 @@ def create_app(settings: Settings) -> FastAPI:
         task.add_done_callback(background_tasks.discard)
         return JSONResponse(dict(scan_state), status_code=202)
 
+    @app.get("/api/admin/drive-folder")
+    async def drive_folder_config(request: Request) -> dict[str, Any]:
+        _require_super_admin(settings, request.state.user)
+        return _drive_folder_payload(repo, settings)
+
+    @app.get("/api/admin/drive-folders/search")
+    async def search_drive_folders(
+        request: Request,
+        q: str = Query(default="", min_length=1, max_length=120),
+    ) -> dict[str, Any]:
+        _require_super_admin(settings, request.state.user)
+        service = _drive_service_or_http_error(settings)
+        safe_query = q.strip().replace("\\", "\\\\").replace("'", "\\'")
+        try:
+            response = await asyncio.to_thread(
+                lambda: service.files()
+                .list(
+                    q=(
+                        f"mimeType = '{FOLDER_MIME}' and trashed = false "
+                        f"and name contains '{safe_query}'"
+                    ),
+                    pageSize=30,
+                    fields="files(id,name,webViewLink,driveId)",
+                    corpora="allDrives",
+                    includeItemsFromAllDrives=True,
+                    supportsAllDrives=True,
+                )
+                .execute()
+            )
+        except Exception as exc:
+            LOGGER.exception("Drive folder search failed for query=%s", q)
+            raise HTTPException(
+                status_code=502,
+                detail="La recherche Drive a échoué. Vérifiez le partage et les identifiants Google.",
+            ) from exc
+        return {
+            "items": [
+                {
+                    "folder_id": item["id"],
+                    "folder_name": item.get("name", item["id"]),
+                    "folder_url": item.get("webViewLink")
+                    or f"https://drive.google.com/drive/folders/{item['id']}",
+                    "shared_drive": bool(item.get("driveId")),
+                }
+                for item in response.get("files", [])
+            ]
+        }
+
+    @app.post("/api/admin/drive-folder/test")
+    async def test_drive_folder(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+        _require_super_admin(settings, request.state.user)
+        folder_id = _extract_folder_id(str(payload.get("folder_url_or_id") or "").strip())
+        if not folder_id:
+            raise HTTPException(status_code=400, detail="Lien ou identifiant Drive invalide")
+        return await _resolve_drive_folder(settings, folder_id)
+
+    @app.put("/api/admin/drive-folder")
+    async def update_drive_folder(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+        user = _require_super_admin(settings, request.state.user)
+        folder_id = _extract_folder_id(str(payload.get("folder_url_or_id") or "").strip())
+        if not folder_id:
+            raise HTTPException(status_code=400, detail="Lien ou identifiant Drive invalide")
+        folder = await _resolve_drive_folder(settings, folder_id)
+        return repo.set_drive_folder_setting(
+            folder_id=folder["folder_id"],
+            folder_name=folder["folder_name"],
+            folder_url=folder["folder_url"],
+            user_email=str(user["email"]),
+        )
+
     @app.get("/api/videos")
     async def videos(
         q: str = Query(default=""),
@@ -278,6 +353,7 @@ def create_app(settings: Settings) -> FastAPI:
         asset_type: str = Query(default=""),
         workflow_stage: str = Query(default=""),
         label: str = Query(default=""),
+        tracking: str = Query(default=""),
         sort_by: str = Query(default="file_name"),
         sort_dir: str = Query(default="asc"),
         page: int = Query(default=1, ge=1),
@@ -319,6 +395,7 @@ def create_app(settings: Settings) -> FastAPI:
                 asset_type=asset_type,
                 workflow_stage=workflow_stage,
                 label=label,
+                tracking=tracking,
             ),
             sort_by=sort_by,
             sort_dir=sort_dir,
@@ -327,7 +404,9 @@ def create_app(settings: Settings) -> FastAPI:
             use_fts=semantic,
         )
 
-        labels_map = repo.get_labels_map([item.file_id for item in result.items])
+        file_ids = [item.file_id for item in result.items]
+        labels_map = repo.get_labels_map(file_ids)
+        latest_label_edits = repo.get_latest_label_edits(file_ids)
         return {
             "total": result.total,
             "page": result.page,
@@ -339,6 +418,12 @@ def create_app(settings: Settings) -> FastAPI:
                     "file_size_human": format_bytes(item.file_size),
                     "duration_human": format_duration(item.duration_seconds),
                     "labels": labels_map.get(item.file_id, []),
+                    "is_new": not bool(item.reviewed_at),
+                    "completeness": _video_completeness(
+                        item.to_dict(),
+                        labels_map.get(item.file_id, []),
+                    ),
+                    "last_label_edit": latest_label_edits.get(item.file_id),
                 }
                 for item in result.items
             ],
@@ -355,6 +440,12 @@ def create_app(settings: Settings) -> FastAPI:
         payload["lexicon_terms"] = repo.get_video_lexicon_terms(file_id)
         payload["related_videos"] = repo.get_related_videos(file_id)
         payload["labels"] = repo.get_video_labels(file_id)
+        payload["label_history"] = repo.get_label_history(file_id)
+        payload["last_label_edit"] = (
+            payload["label_history"][0] if payload["label_history"] else None
+        )
+        payload["is_new"] = not bool(item.reviewed_at)
+        payload["completeness"] = _video_completeness(payload, payload["labels"])
         return payload
 
     @app.put("/api/videos/{file_id}/metadata")
@@ -385,15 +476,33 @@ def create_app(settings: Settings) -> FastAPI:
         return data
 
     @app.put("/api/videos/{file_id}/labels")
-    async def update_video_labels(file_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def update_video_labels(
+        request: Request,
+        file_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
         _require_writable(settings)
         raw_labels = payload.get("labels", [])
         if not isinstance(raw_labels, list):
             raise HTTPException(status_code=400, detail="labels must be a list")
-        labels = repo.set_video_labels(file_id, [str(label) for label in raw_labels])
+        user = request.state.user
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        labels = repo.set_video_labels(
+            file_id,
+            [str(label) for label in raw_labels],
+            user_id=int(user["id"]),
+            user_email=str(user["email"]),
+        )
         if labels is None:
             raise HTTPException(status_code=404, detail="Video not found")
-        return {"file_id": file_id, "labels": labels}
+        history = repo.get_label_history(file_id)
+        return {
+            "file_id": file_id,
+            "labels": labels,
+            "label_history": history,
+            "last_label_edit": history[0] if history else None,
+        }
 
     return app
 
@@ -403,11 +512,15 @@ def _require_writable(settings: Settings) -> None:
         raise HTTPException(status_code=403, detail="Public demo is read-only")
 
 
-def _require_drive_scan(settings: Settings, user: dict[str, Any] | None) -> str:
+def _require_drive_scan(
+    repo: VideoRepository,
+    settings: Settings,
+    user: dict[str, Any] | None,
+) -> str:
     _require_writable(settings)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
-    folder_id = _configured_scan_folder_id(settings)
+    folder_id = _configured_scan_folder_id(repo, settings)
     if not folder_id:
         raise HTTPException(
             status_code=503,
@@ -418,8 +531,95 @@ def _require_drive_scan(settings: Settings, user: dict[str, Any] | None) -> str:
     return folder_id
 
 
-def _configured_scan_folder_id(settings: Settings) -> str:
+def _configured_scan_folder_id(repo: VideoRepository, settings: Settings) -> str:
+    stored = repo.get_drive_folder_setting()
+    if stored and stored.get("folder_id"):
+        return str(stored["folder_id"])
     return _extract_folder_id(settings.drive_scan_folder_id.strip()) or ""
+
+
+def _drive_folder_payload(repo: VideoRepository, settings: Settings) -> dict[str, Any]:
+    stored = repo.get_drive_folder_setting()
+    if stored and stored.get("folder_id"):
+        return {"configured": True, "source": "application", **stored}
+    folder_id = _extract_folder_id(settings.drive_scan_folder_id.strip()) or ""
+    return {
+        "configured": bool(folder_id),
+        "source": "environment" if folder_id else "",
+        "folder_id": folder_id,
+        "folder_name": "",
+        "folder_url": (
+            f"https://drive.google.com/drive/folders/{folder_id}" if folder_id else ""
+        ),
+        "updated_by_email": "",
+        "updated_at": "",
+        "last_scan_at": "",
+        "last_scan_status": "",
+    }
+
+
+def _is_super_admin(settings: Settings, email: str) -> bool:
+    return bool(settings.admin_email) and email.strip().casefold() == settings.admin_email.strip().casefold()
+
+
+def _require_super_admin(
+    settings: Settings,
+    user: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if not _is_super_admin(settings, str(user["email"])):
+        raise HTTPException(status_code=403, detail="Accès réservé au super-administrateur")
+    return user
+
+
+def _drive_service(settings: Settings) -> Any:
+    credentials = authenticate(
+        settings.google_credentials_path,
+        settings.google_token_path,
+        service_account_json=settings.google_service_account_json,
+        allow_interactive=False,
+    )
+    return build_drive_service(credentials)
+
+
+def _drive_service_or_http_error(settings: Settings) -> Any:
+    try:
+        return _drive_service(settings)
+    except Exception as exc:
+        LOGGER.exception("Google Drive authentication failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Impossible de se connecter à Google Drive. Vérifiez le compte de service.",
+        ) from exc
+
+
+async def _resolve_drive_folder(settings: Settings, folder_id: str) -> dict[str, Any]:
+    service = _drive_service_or_http_error(settings)
+    try:
+        item = await asyncio.to_thread(
+            lambda: service.files()
+            .get(
+                fileId=folder_id,
+                fields="id,name,mimeType,webViewLink",
+                supportsAllDrives=True,
+            )
+            .execute()
+        )
+    except Exception as exc:
+        LOGGER.exception("Drive folder access test failed for folder_id=%s", folder_id)
+        raise HTTPException(
+            status_code=400,
+            detail="Le compte de service ne peut pas accéder à ce dossier",
+        ) from exc
+    if item.get("mimeType") != FOLDER_MIME:
+        raise HTTPException(status_code=400, detail="L'élément Drive sélectionné n'est pas un dossier")
+    return {
+        "folder_id": item["id"],
+        "folder_name": item.get("name", item["id"]),
+        "folder_url": item.get("webViewLink")
+        or f"https://drive.google.com/drive/folders/{item['id']}",
+    }
 
 
 async def _run_drive_scan(
@@ -442,6 +642,10 @@ async def _run_drive_scan(
                 "message": "Scan terminé",
             }
         )
+        VideoRepository(settings.db_path).record_drive_scan(
+            status="succeeded",
+            scanned_at=str(scan_state["finished_at"]),
+        )
     except Exception:
         LOGGER.exception("Online Drive scan failed")
         scan_state.update(
@@ -451,12 +655,48 @@ async def _run_drive_scan(
                 "message": "Le scan Drive a échoué. Vérifiez la configuration Render.",
             }
         )
+        VideoRepository(settings.db_path).record_drive_scan(
+            status="failed",
+            scanned_at=str(scan_state["finished_at"]),
+        )
     finally:
         scan_lock.release()
 
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _video_completeness(
+    video: dict[str, Any],
+    labels: list[dict[str, Any]],
+) -> dict[str, Any]:
+    checks = {
+        "type_et_statut_confirmes": bool(video.get("reviewed_at")),
+        "titre": bool(str(video.get("editorial_title") or "").strip()),
+        "theme": bool(str(video.get("main_theme") or "").strip()),
+        "intervenant": bool(
+            str(video.get("speaker") or video.get("preacher") or "").strip()
+        ),
+        "label": bool(labels),
+    }
+    completed = sum(checks.values())
+    if completed == len(checks):
+        status = "complete"
+        label = "Complète"
+    elif completed <= 1:
+        status = "missing"
+        label = "À compléter"
+    else:
+        status = "partial"
+        label = "Partiellement renseignée"
+    return {
+        "status": status,
+        "label": label,
+        "completed": completed,
+        "total": len(checks),
+        "missing": [key for key, present in checks.items() if not present],
+    }
 
 
 def _session_response(

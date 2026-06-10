@@ -70,6 +70,22 @@ body {
   color: var(--success);
 }
 
+.account-actions,
+.button-row,
+.drive-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  font-weight: 700;
+}
+
 .auth-page {
   display: grid;
   place-items: center;
@@ -218,6 +234,33 @@ h1 {
   margin-bottom: 20px;
 }
 
+.tracking-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(145px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.tracking-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  text-align: left;
+  background: var(--panel-2);
+}
+
+.tracking-card span {
+  color: var(--muted);
+}
+
+.tracking-card.active {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .workflow-cards {
   display: grid;
   grid-template-columns: repeat(4, minmax(150px, 1fr));
@@ -253,6 +296,49 @@ h1 {
 
 .workflow-card strong {
   font-size: 1.6rem;
+}
+
+.row-badges,
+.video-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.new-badge,
+.completion-badge {
+  display: inline-flex;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.new-badge {
+  border-color: #2f8f71;
+  color: #8ee3c7;
+  background: #15372f;
+}
+
+.completion-complete {
+  color: #8ee3c7;
+}
+
+.completion-partial {
+  color: #ffd27a;
+}
+
+.completion-missing {
+  color: #ff9b9b;
+}
+
+.label-edit-by {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
 }
 
 .stat {
@@ -331,6 +417,7 @@ h1 {
 select,
 input[type="number"],
 input[type="text"],
+input[type="search"],
 textarea,
 button {
   border-radius: 12px;
@@ -578,6 +665,96 @@ dialog article {
   gap: 10px;
 }
 
+.wide-dialog {
+  width: min(900px, calc(100vw - 32px));
+}
+
+.dialog-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.dialog-heading h2 {
+  margin: 0;
+}
+
+.guide-layout,
+.drive-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.guide-layout h3,
+.drive-config-grid h3 {
+  margin: 0 0 10px;
+}
+
+.guide-layout ol {
+  display: grid;
+  gap: 9px;
+  padding-left: 20px;
+}
+
+.status-guide {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 9px 12px;
+  margin: 0;
+}
+
+.status-guide dt {
+  font-weight: 700;
+}
+
+.status-guide dd {
+  margin: 0;
+  color: var(--muted);
+}
+
+.drive-current-folder {
+  display: grid;
+  gap: 5px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.drive-current-folder span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.drive-search-row input {
+  min-width: 0;
+  flex: 1;
+}
+
+.drive-search-results {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.drive-folder-result {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border-radius: 6px;
+  text-align: left;
+  background: var(--panel-2);
+}
+
+.drive-folder-result span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .detail-row {
   display: grid;
   grid-template-columns: 160px 1fr;
@@ -610,6 +787,33 @@ dialog article {
 
 .label-editor input {
   width: 100%;
+}
+
+.label-history {
+  margin-top: 16px;
+}
+
+.label-history h4 {
+  margin: 0 0 8px;
+}
+
+.label-history-entry {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3px 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  font-size: 0.82rem;
+}
+
+.label-history-entry span,
+.label-history-entry p {
+  color: var(--muted);
+}
+
+.label-history-entry p {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .workflow-editor-grid {
@@ -730,6 +934,12 @@ dialog article {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .tracking-strip,
+  .guide-layout,
+  .drive-config-grid {
+    grid-template-columns: 1fr;
+  }
+
   .workflow-editor-grid {
     grid-template-columns: 1fr;
   }
@@ -737,6 +947,10 @@ dialog article {
 
 @media (max-width: 560px) {
   .workflow-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .status-guide {
     grid-template-columns: 1fr;
   }
 }

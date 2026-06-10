@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import smtplib
+import logging
 from email.message import EmailMessage
 
 from utils.config import Settings
+
+LOGGER = logging.getLogger(__name__)
 
 
 class EmailDeliveryError(RuntimeError):
@@ -54,5 +57,18 @@ class EmailSender:
                 if self.settings.smtp_username:
                     server.login(self.settings.smtp_username, self.settings.smtp_password)
                 server.send_message(message)
+        except smtplib.SMTPAuthenticationError as exc:
+            LOGGER.error("SMTP authentication rejected: code=%s error=%s", exc.smtp_code, exc.smtp_error)
+            raise EmailDeliveryError("Le serveur e-mail a refusé les identifiants SMTP") from exc
+        except smtplib.SMTPSenderRefused as exc:
+            LOGGER.error("SMTP sender rejected: code=%s sender=%s error=%s", exc.smtp_code, exc.sender, exc.smtp_error)
+            raise EmailDeliveryError("L'adresse d'expédition n'est pas autorisée par Brevo") from exc
+        except smtplib.SMTPRecipientsRefused as exc:
+            LOGGER.error("SMTP recipient rejected: recipients=%s", list(exc.recipients))
+            raise EmailDeliveryError("L'adresse du destinataire a été refusée par le service e-mail") from exc
+        except smtplib.SMTPDataError as exc:
+            LOGGER.error("SMTP message rejected: code=%s error=%s", exc.smtp_code, exc.smtp_error)
+            raise EmailDeliveryError("Brevo a refusé le message ou le quota d'envoi est atteint") from exc
         except (OSError, smtplib.SMTPException) as exc:
+            LOGGER.exception("SMTP delivery failed")
             raise EmailDeliveryError("Impossible d'envoyer l'e-mail de vérification") from exc
