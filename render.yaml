@@ -32,6 +32,12 @@ services:
         value: "true"
       - key: SESSION_COOKIE_SECURE
         value: "true"
+      - key: LOGIN_MAX_ATTEMPTS
+        value: "8"
+      - key: LOGIN_LOCKOUT_MINUTES
+        value: "15"
+      - key: TRUST_PROXY_HEADERS
+        value: "true"
       - key: EMAIL_VERIFICATION_REQUIRED
         value: "true"
       - key: EMAIL_VERIFICATION_MINUTES

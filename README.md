@@ -2,11 +2,13 @@
 
 A production-ready Python application that connects to Google Drive (API v3), recursively maps **all folders/subfolders**, detects **all video files**, extracts **Drive + advanced video metadata**, and generates a professional multi-sheet Excel inventory:
 
-- **Inventory**: full index with filters and frozen headers
-- **Statistics**: dashboard-style totals & distributions
-- **Duplicates**: potential duplicates + similarity indicators
-- **Folder Mapping**: hierarchical folder summary (counts, sizes)
-- **Errors**: inaccessible items, API/metadata failures
+- **Inventaire**: full index with filter dropdowns and frozen headers
+- **Statistiques**: dashboard-style totals & distributions
+- **Doublons**: potential duplicates + similarity indicators
+- **Arborescence**: hierarchical folder summary (counts, sizes)
+- **Erreurs**: inaccessible items, API/metadata failures
+
+Sheet titles and column headers are in French, matching the dashboard.
 
 It supports **incremental rescans** via a local **SQLite index** to minimize redundant API calls and re-processing.
 
@@ -99,9 +101,30 @@ python main.py serve
 
 ```bash
 python main.py scan --full
+python main.py scan --no-export
 python main.py run --no-serve
 python main.py serve --host 0.0.0.0 --port 8080
 ```
+
+### Generate the Excel report
+
+`scan` and `run` write the report automatically unless `--no-export` is passed.
+To rebuild it from the existing index without touching Drive:
+
+```bash
+python main.py export
+python main.py export --output reports/inventaire-2026-08.xlsx
+```
+
+The dashboard exposes the same report through **Exporter Excel**, plus a flat
+**Exporter CSV**. Both honour the filters currently applied on screen: the
+Inventaire sheet contains exactly the rows you can see, while the Statistiques,
+Doublons, Arborescence and Erreurs sheets always describe the whole library.
+
+| Endpoint | Returns |
+| --- | --- |
+| `GET /api/export/inventory.xlsx` | five-sheet workbook |
+| `GET /api/export/videos.csv` | flat CSV, UTF-8 with BOM for Excel |
 
 Set `MAX_DOWNLOAD_MB` in `.env` to enable ffprobe metadata (downloads files up to that size). Use `0` to index Drive metadata only (faster).
 
@@ -116,8 +139,8 @@ Set `MAX_DOWNLOAD_MB` in `.env` to enable ffprobe metadata (downloads files up t
 
 - **"access_denied" or consent issues**: ensure OAuth consent screen is configured; for Workspace Internal apps, verify user is in the Workspace org.
 - **"insufficientPermissions"**: delete `cache/token.json` and rerun to re-consent; ensure Drive API is enabled.
-- **Quota errors (429/403 rateLimitExceeded)**: rerun later; the app retries with exponential backoff and stores progress incrementally.
-- **ffprobe not found**: install FFmpeg or set `FFMPEG_BIN_DIR` in `.env`, or run with `--no-ffprobe`.
+- **Quota errors (429/403 rateLimitExceeded)**: rerun later; the app retries with exponential backoff plus jitter, honours the `Retry-After` header, and stores progress incrementally. A 403 is only retried when Drive reports a rate-limit reason — a permission 403 fails immediately.
+- **ffprobe not found**: install FFmpeg, set `FFMPEG_BIN_DIR` in `.env`, or set `ENABLE_FFPROBE=false` to index Drive metadata only.
 
 ## Security
 
@@ -137,6 +160,11 @@ metadata. Every authenticated user can launch an incremental scan of one fixed
 Google Drive folder. Only the account matching `ADMIN_EMAIL` can change that
 folder from the application.
 
+Repeated failed sign-ins lock an account: after `LOGIN_MAX_ATTEMPTS` (default
+8) consecutive failures, that e-mail address and the client IP are refused with
+HTTP 429 for `LOGIN_LOCKOUT_MINUTES` (default 15). A successful sign-in clears
+the counter. Set `LOGIN_MAX_ATTEMPTS=0` to disable.
+
 The collaborative dashboard also provides:
 
 - quick views for newly indexed videos, incomplete records, missing labels and
@@ -144,7 +172,12 @@ The collaborative dashboard also provides:
 - a completeness indicator for each video;
 - a viewer guide with the meaning of every production status;
 - normalized reusable labels and the e-mail of the last label editor;
-- a complete label change history in each video detail.
+- a complete label change history in each video detail;
+- Excel and CSV exports of the filtered library.
+
+A Drive scan started from the dashboard records its progress in the database,
+so a scan cut short by a service restart is reported as **interrupted** on the
+next page load instead of appearing to have never run.
 
 The Render service uses a persistent disk for SQLite. Render persistent disks
 require a paid web service plan; the Blueprint uses the `starter` plan.

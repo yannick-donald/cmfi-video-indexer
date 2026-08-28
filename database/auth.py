@@ -7,6 +7,7 @@ import re
 import secrets
 import sqlite3
 from datetime import UTC, datetime, timedelta
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -19,10 +20,22 @@ SCRYPT_P = 1
 VERIFICATION_CODE_DIGITS = 6
 MAX_VERIFICATION_ATTEMPTS = 6
 VERIFICATION_RESEND_SECONDS = 60
+_SQL_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 class AuthError(ValueError):
     pass
+
+
+class LoginThrottledError(AuthError):
+    """Raised when an identifier has failed to sign in too many times."""
+
+    def __init__(self, retry_after_seconds: int) -> None:
+        self.retry_after_seconds = retry_after_seconds
+        minutes = max(1, (retry_after_seconds + 59) // 60)
+        super().__init__(
+            f"Trop de tentatives de connexion. Réessayez dans {minutes} minute(s)."
+        )
 
 
 class AuthRepository:
@@ -117,6 +130,100 @@ class AuthRepository:
             )
             conn.commit()
         return {"id": row["id"], "email": row["email"]}
+
+    def check_login_allowed(self, identifiers: Sequence[tuple[str, str]]) -> None:
+        """
+        Raise LoginThrottledError if any identifier is currently locked out.
+
+        Identifiers are (scope, value) pairs, typically the e-mail address and
+        the client IP. Locking on both means an attacker who rotates IPs still
+        cannot brute-force a single account, and one who rotates e-mail
+        addresses still gets stopped by the IP counter.
+        """
+        if not identifiers:
+            return
+        now = _sql_now()
+        with self._connect() as conn:
+            for scope, value in identifiers:
+                row = conn.execute(
+                    "SELECT locked_until FROM login_throttle WHERE scope = ? AND identifier = ?",
+                    (scope, value),
+                ).fetchone()
+                if not row or not row["locked_until"]:
+                    continue
+                if row["locked_until"] > now:
+                    raise LoginThrottledError(_seconds_between(now, str(row["locked_until"])))
+
+    def register_failed_login(
+        self,
+        identifiers: Sequence[tuple[str, str]],
+        *,
+        max_attempts: int,
+        lockout_minutes: int,
+    ) -> None:
+        """Count a failed sign-in and lock the identifier once it hits the limit."""
+        if not identifiers or max_attempts <= 0:
+            return
+        now_dt = datetime.now(UTC)
+        now = now_dt.strftime(_SQL_TIME_FORMAT)
+        window_start = (now_dt - timedelta(minutes=lockout_minutes)).strftime(_SQL_TIME_FORMAT)
+        locked_until = (now_dt + timedelta(minutes=lockout_minutes)).strftime(_SQL_TIME_FORMAT)
+
+        with self._connect() as conn:
+            for scope, value in identifiers:
+                row = conn.execute(
+                    """
+                    SELECT failed_count, first_failed_at, locked_until
+                    FROM login_throttle WHERE scope = ? AND identifier = ?
+                    """,
+                    (scope, value),
+                ).fetchone()
+
+                # Start a fresh window when the previous one has fully elapsed,
+                # so occasional typos never accumulate into a lockout.
+                stale = bool(row) and str(row["first_failed_at"]) < window_start
+                expired_lock = bool(row) and bool(row["locked_until"]) and str(row["locked_until"]) <= now
+                if not row or stale or expired_lock:
+                    count = 1
+                    first_failed_at = now
+                else:
+                    count = int(row["failed_count"]) + 1
+                    first_failed_at = str(row["first_failed_at"])
+
+                conn.execute(
+                    """
+                    INSERT INTO login_throttle(
+                        scope, identifier, failed_count, first_failed_at, last_failed_at, locked_until
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(scope, identifier) DO UPDATE SET
+                        failed_count = excluded.failed_count,
+                        first_failed_at = excluded.first_failed_at,
+                        last_failed_at = excluded.last_failed_at,
+                        locked_until = excluded.locked_until
+                    """,
+                    (
+                        scope,
+                        value,
+                        count,
+                        first_failed_at,
+                        now,
+                        locked_until if count >= max_attempts else None,
+                    ),
+                )
+            conn.execute("DELETE FROM login_throttle WHERE last_failed_at < ?", (window_start,))
+            conn.commit()
+
+    def clear_login_failures(self, identifiers: Sequence[tuple[str, str]]) -> None:
+        if not identifiers:
+            return
+        with self._connect() as conn:
+            for scope, value in identifiers:
+                conn.execute(
+                    "DELETE FROM login_throttle WHERE scope = ? AND identifier = ?",
+                    (scope, value),
+                )
+            conn.commit()
 
     def create_verification_code(
         self,
@@ -265,6 +372,15 @@ class AuthRepository:
         with self._connect() as conn:
             conn.execute("DELETE FROM user_sessions WHERE token_hash = ?", (_hash_token(token),))
             conn.commit()
+
+
+def _sql_now() -> str:
+    return datetime.now(UTC).strftime(_SQL_TIME_FORMAT)
+
+
+def _seconds_between(start: str, end: str) -> int:
+    delta = datetime.strptime(end, _SQL_TIME_FORMAT) - datetime.strptime(start, _SQL_TIME_FORMAT)
+    return max(1, int(delta.total_seconds()))
 
 
 def _normalize_email(email: str) -> str:

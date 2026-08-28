@@ -314,6 +314,23 @@ def _migrate(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS login_throttle (
+            scope TEXT NOT NULL,
+            identifier TEXT NOT NULL,
+            failed_count INTEGER NOT NULL DEFAULT 0,
+            first_failed_at TEXT NOT NULL,
+            last_failed_at TEXT NOT NULL,
+            locked_until TEXT,
+            PRIMARY KEY(scope, identifier)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_login_throttle_last_failed "
+        "ON login_throttle(last_failed_at)"
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS app_settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL,

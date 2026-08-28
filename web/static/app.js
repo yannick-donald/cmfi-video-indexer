@@ -823,7 +823,28 @@ async function pollFolderScan() {
   if (data.status === "failed") {
     throw new Error(data.message || "Le scan Drive a échoué");
   }
+  if (data.status === "interrupted") {
+    els.scanFolderStatus.textContent =
+      data.message || "Le scan précédent a été interrompu. Relancez-le pour terminer l'indexation.";
+    els.scanFolderButton.disabled = false;
+    return;
+  }
   els.scanFolderButton.disabled = false;
+}
+
+// Surface a scan that a restart killed, without waiting for the user to click.
+async function showLastScanState() {
+  try {
+    const response = await fetch("/api/scan-folder/status");
+    if (!response.ok) return;
+    const data = await response.json();
+    if (data.status === "interrupted" || data.status === "failed") {
+      els.scanFolderStatus.textContent =
+        data.message || "Le dernier scan Drive ne s'est pas terminé.";
+    }
+  } catch (error) {
+    // A missing or forbidden status endpoint is not worth surfacing on load.
+  }
 }
 
 function handleScanPollingError(error) {
@@ -833,6 +854,7 @@ function handleScanPollingError(error) {
 
 if (els.scanFolderButton && !appMode.readOnly) {
   els.scanFolderButton.addEventListener("click", triggerFolderScan);
+  showLastScanState();
   pollFolderScan().catch(handleScanPollingError);
 }
 

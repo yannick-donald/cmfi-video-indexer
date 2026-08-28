@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from auth.email_sender import EmailDeliveryError, EmailSender
-from database.auth import AuthError, AuthRepository
+from database.auth import AuthError, AuthRepository, LoginThrottledError
 from database.repository import SearchFilters, VideoRepository
 from demo_data import seed_public_demo
 from auth.drive_auth import authenticate
@@ -48,17 +48,7 @@ def create_app(settings: Settings) -> FastAPI:
     app = FastAPI(title="Google Drive Video Library", version="1.0.0")
     scan_lock = asyncio.Lock()
     background_tasks: set[asyncio.Task[Any]] = set()
-    scan_state: dict[str, Any] = {
-        "status": "idle",
-        "started_at": None,
-        "finished_at": None,
-        "videos_found": 0,
-        "videos_indexed": 0,
-        "videos_skipped": 0,
-        "folders_scanned": 0,
-        "errors": 0,
-        "message": "",
-    }
+    scan_state: dict[str, Any] = _initial_scan_state(repo)
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -124,25 +114,42 @@ def create_app(settings: Settings) -> FastAPI:
         return _session_response(auth_repo, settings, user)
 
     @app.post("/api/auth/login")
-    async def login(payload: dict[str, Any]) -> JSONResponse:
+    async def login(request: Request, payload: dict[str, Any]) -> JSONResponse:
+        email = str(payload.get("email") or "")
+        identifiers = _login_identifiers(request, settings, email)
         try:
-            user = auth_repo.authenticate(
-                str(payload.get("email") or ""),
-                str(payload.get("password") or ""),
-            )
+            auth_repo.check_login_allowed(identifiers)
+        except LoginThrottledError as exc:
+            raise HTTPException(
+                status_code=429,
+                detail=str(exc),
+                headers={"Retry-After": str(exc.retry_after_seconds)},
+            ) from exc
+
+        try:
+            user = auth_repo.authenticate(email, str(payload.get("password") or ""))
         except AuthError as exc:
             if "confirmer votre adresse" in str(exc):
+                # Correct credentials on an unverified account: not a failed
+                # attempt, so it must not count towards the lockout.
+                auth_repo.clear_login_failures(identifiers)
                 return JSONResponse(
                     {
                         "detail": str(exc),
                         "verification_required": True,
-                        "email": str(payload.get("email") or "").strip().casefold(),
+                        "email": email.strip().casefold(),
                     },
                     status_code=403,
                 )
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not user:
+            auth_repo.register_failed_login(
+                identifiers,
+                max_attempts=settings.login_max_attempts,
+                lockout_minutes=settings.login_lockout_minutes,
+            )
             raise HTTPException(status_code=401, detail="E-mail ou mot de passe incorrect")
+        auth_repo.clear_login_failures(identifiers)
         return _session_response(auth_repo, settings, user)
 
     @app.post("/api/auth/verify-email")
@@ -251,20 +258,30 @@ def create_app(settings: Settings) -> FastAPI:
             )
 
         await scan_lock.acquire()
-        scan_state.update(
-            {
-                "status": "running",
-                "started_at": _utc_now(),
-                "finished_at": None,
-                "videos_found": 0,
-                "videos_indexed": 0,
-                "videos_skipped": 0,
-                "folders_scanned": 0,
-                "errors": 0,
-                "message": "Analyse du dossier Drive en cours",
-            }
-        )
-        task = asyncio.create_task(_run_drive_scan(settings, folder_id, scan_lock, scan_state))
+        try:
+            _update_scan_state(
+                repo,
+                scan_state,
+                {
+                    "status": "running",
+                    "started_at": _utc_now(),
+                    "finished_at": None,
+                    "videos_found": 0,
+                    "videos_indexed": 0,
+                    "videos_skipped": 0,
+                    "folders_scanned": 0,
+                    "errors": 0,
+                    "message": "Analyse du dossier Drive en cours",
+                },
+            )
+            task = asyncio.create_task(
+                _run_drive_scan(settings, repo, folder_id, scan_lock, scan_state)
+            )
+        except BaseException:
+            # The task owns the release; if it never started, release here or the
+            # endpoint would answer 409 forever.
+            scan_lock.release()
+            raise
         background_tasks.add(task)
         task.add_done_callback(background_tasks.discard)
         return JSONResponse(dict(scan_state), status_code=202)
@@ -681,6 +698,88 @@ def _search_filters(**kwargs: Any) -> SearchFilters:
     )
 
 
+def _client_ip(request: Request, settings: Settings) -> str:
+    """
+    Best-effort client IP.
+
+    On Render the app sits behind a proxy, so X-Forwarded-For carries the real
+    address. The header is spoofable, which is why the e-mail counter — which
+    an attacker cannot rotate when targeting one account — is the primary
+    defence and this is only a second layer.
+    """
+    if settings.trust_proxy_headers:
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else ""
+
+
+def _login_identifiers(
+    request: Request,
+    settings: Settings,
+    email: str,
+) -> list[tuple[str, str]]:
+    identifiers: list[tuple[str, str]] = []
+    normalized_email = email.strip().casefold()
+    if normalized_email:
+        identifiers.append(("email", normalized_email))
+    ip = _client_ip(request, settings)
+    if ip:
+        identifiers.append(("ip", ip))
+    return identifiers
+
+
+_IDLE_SCAN_STATE: dict[str, Any] = {
+    "status": "idle",
+    "started_at": None,
+    "finished_at": None,
+    "videos_found": 0,
+    "videos_indexed": 0,
+    "videos_skipped": 0,
+    "folders_scanned": 0,
+    "errors": 0,
+    "message": "",
+}
+
+
+def _initial_scan_state(repo: VideoRepository) -> dict[str, Any]:
+    """
+    Restore the last persisted scan state on startup.
+
+    A scan cannot survive a process restart, so a state still marked "running"
+    belongs to a scan that was killed mid-flight (a Render deploy, an OOM). It
+    is reported as interrupted rather than silently resetting to idle, which
+    would claim a half-finished scan had never happened.
+    """
+    state = dict(_IDLE_SCAN_STATE)
+    stored = repo.get_scan_state()
+    if not stored:
+        return state
+    state.update({key: stored[key] for key in state if key in stored})
+    if state["status"] == "running":
+        state["status"] = "interrupted"
+        state["finished_at"] = state["finished_at"] or _utc_now()
+        state["message"] = (
+            "Le scan précédent a été interrompu par un redémarrage du service. "
+            "Relancez-le pour terminer l'indexation."
+        )
+        repo.set_scan_state(state)
+    return state
+
+
+def _update_scan_state(
+    repo: VideoRepository,
+    scan_state: dict[str, Any],
+    changes: dict[str, Any],
+) -> None:
+    scan_state.update(changes)
+    try:
+        repo.set_scan_state(scan_state)
+    except Exception:
+        # Progress reporting must never break the scan itself.
+        LOGGER.exception("Could not persist scan state")
+
+
 def _require_writable(settings: Settings) -> None:
     if settings.read_only:
         raise HTTPException(status_code=403, detail="Public demo is read-only")
@@ -798,13 +897,16 @@ async def _resolve_drive_folder(settings: Settings, folder_id: str) -> dict[str,
 
 async def _run_drive_scan(
     settings: Settings,
+    repo: VideoRepository,
     folder_id: str,
     scan_lock: asyncio.Lock,
     scan_state: dict[str, Any],
 ) -> None:
     try:
         result = await asyncio.to_thread(run_scan, settings, full=False, folder_id=folder_id)
-        scan_state.update(
+        _update_scan_state(
+            repo,
+            scan_state,
             {
                 "status": "succeeded",
                 "finished_at": _utc_now(),
@@ -814,25 +916,21 @@ async def _run_drive_scan(
                 "folders_scanned": result.folders_scanned,
                 "errors": result.errors,
                 "message": "Scan terminé",
-            }
+            },
         )
-        VideoRepository(settings.db_path).record_drive_scan(
-            status="succeeded",
-            scanned_at=str(scan_state["finished_at"]),
-        )
+        repo.record_drive_scan(status="succeeded", scanned_at=str(scan_state["finished_at"]))
     except Exception:
         LOGGER.exception("Online Drive scan failed")
-        scan_state.update(
+        _update_scan_state(
+            repo,
+            scan_state,
             {
                 "status": "failed",
                 "finished_at": _utc_now(),
                 "message": "Le scan Drive a échoué. Vérifiez la configuration Render.",
-            }
+            },
         )
-        VideoRepository(settings.db_path).record_drive_scan(
-            status="failed",
-            scanned_at=str(scan_state["finished_at"]),
-        )
+        repo.record_drive_scan(status="failed", scanned_at=str(scan_state["finished_at"]))
     finally:
         scan_lock.release()
 

@@ -650,6 +650,34 @@ class VideoRepository:
                 )
             conn.commit()
 
+    def get_scan_state(self) -> dict[str, Any] | None:
+        """Last known progress of the web-triggered Drive scan, if any."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'drive_scan_state'"
+            ).fetchone()
+        if not row or not row["value"]:
+            return None
+        try:
+            state = json.loads(str(row["value"]))
+        except json.JSONDecodeError:
+            return None
+        return state if isinstance(state, dict) else None
+
+    def set_scan_state(self, state: dict[str, Any]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO app_settings(key, value, updated_at)
+                VALUES('drive_scan_state', ?, datetime('now'))
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                (json.dumps(state),),
+            )
+            conn.commit()
+
     def get_tracking_stats(self) -> dict[str, int]:
         with self._connect() as conn:
             row = conn.execute(
