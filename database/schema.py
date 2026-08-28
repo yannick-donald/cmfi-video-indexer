@@ -402,6 +402,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         "keywords",
         "semantic_tags",
     }
+    _backfill_internal_ids(conn)
+
     existing_fts_cols = _table_columns(conn, "videos_fts") if _table_exists(conn, "videos_fts") else set()
     if existing_fts_cols and not required_fts_cols.issubset(existing_fts_cols):
         conn.execute("DROP TABLE videos_fts")
@@ -427,6 +429,72 @@ def _migrate(conn: sqlite3.Connection) -> None:
         WHERE file_id NOT IN (SELECT file_id FROM videos_fts)
         """
     )
+
+
+def _backfill_internal_ids(conn: sqlite3.Connection) -> None:
+    """
+    Give every video an internal ID (CHR-VID-000123).
+
+    Videos indexed before the internal ID existed never received one, and a
+    rescan could not repair them: the ID was excluded from the rescan UPDATE,
+    so it was allocated in the registry but never copied onto the row. This
+    backfill closes that gap once, at startup.
+
+    Idempotent: every statement is scoped to rows that are still missing an ID,
+    so it is a no-op from the second run onwards. Existing IDs are never
+    reassigned - the registry is the authority and is left untouched.
+    """
+    missing = conn.execute(
+        "SELECT COUNT(*) FROM videos WHERE COALESCE(internal_video_id, '') = ''"
+    ).fetchone()[0]
+    if not missing:
+        return
+
+    # 1) Reserve a registry row (and therefore a sequence number) per video.
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO video_internal_ids(file_id, created_at)
+        SELECT file_id, datetime('now')
+        FROM videos
+        WHERE COALESCE(internal_video_id, '') = ''
+        """
+    )
+    # 2) Format any registry row that does not carry its label yet.
+    conn.execute(
+        """
+        UPDATE video_internal_ids
+        SET internal_video_id = printf('CHR-VID-%06d', id)
+        WHERE COALESCE(internal_video_id, '') = ''
+        """
+    )
+    # 3) Copy the registry value onto the video row.
+    conn.execute(
+        """
+        UPDATE videos
+        SET internal_video_id = (
+            SELECT r.internal_video_id
+            FROM video_internal_ids r
+            WHERE r.file_id = videos.file_id
+        )
+        WHERE COALESCE(internal_video_id, '') = ''
+        """
+    )
+    # 4) Drop the stale search-index rows so the rebuild below re-adds them
+    #    with the ID included; otherwise the ID stays unsearchable in FTS mode.
+    if _table_exists(conn, "videos_fts"):
+        conn.execute(
+            """
+            DELETE FROM videos_fts
+            WHERE file_id IN (
+                SELECT f.file_id
+                FROM videos_fts f
+                JOIN videos v ON v.file_id = f.file_id
+                WHERE COALESCE(f.internal_video_id, '') = ''
+                  AND COALESCE(v.internal_video_id, '') != ''
+            )
+            """
+        )
+    conn.commit()
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:

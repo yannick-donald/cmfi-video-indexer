@@ -76,8 +76,11 @@ CHRISTIAN_METADATA_FIELDS = {
     "semantic_tags",
 }
 
+# The internal ID is deliberately NOT preserved here: upsert_video always
+# resolves it from the video_internal_ids registry, which is the authority, so
+# writing it on every rescan is idempotent. Keeping it in this set meant a video
+# indexed before the ID existed could never be repaired by a rescan.
 PRESERVE_ON_RESCAN = CHRISTIAN_METADATA_FIELDS | {
-    "internal_video_id",
     "asset_type",
     "workflow_stage",
     "source_file_id",
@@ -821,7 +824,7 @@ class VideoRepository:
         page_size: int = 50,
         use_fts: bool = False,
     ) -> SearchResult:
-        if use_fts and filters.query.strip():
+        if use_fts and _build_fts_query(filters.query):
             return self._search_fts(filters, sort_by, sort_dir, page, page_size)
 
         where, params = self._build_where(filters)
@@ -858,7 +861,7 @@ class VideoRepository:
         page: int,
         page_size: int,
     ) -> SearchResult:
-        query = filters.query.strip()
+        query = _build_fts_query(filters.query)
         offset = max(page - 1, 0) * page_size
         sort_col = SORT_COLUMNS.get(sort_by, SORT_COLUMNS["file_name"])
         direction = "DESC" if sort_dir.lower() == "desc" else "ASC"
@@ -1134,7 +1137,8 @@ class VideoRepository:
             clauses.append(
                 """
                 (
-                    file_name LIKE ?
+                    internal_video_id LIKE ?
+                    OR file_name LIKE ?
                     OR folder_path LIKE ?
                     OR parent_folder LIKE ?
                     OR owner LIKE ?
@@ -1165,7 +1169,7 @@ class VideoRepository:
                 )
                 """
             )
-            params.extend([q] * 23)
+            params.extend([q] * 24)
 
         if filters.folder:
             clauses.append("folder_path = ?")
@@ -1260,6 +1264,28 @@ class VideoRepository:
         if not clauses:
             return "", params
         return "WHERE " + " AND ".join(clauses), params
+
+
+def _build_fts_query(raw: str) -> str:
+    """
+    Turn free user input into a safe FTS5 MATCH expression.
+
+    FTS5 treats -, ", *, :, ( ) and the bare words AND/OR/NOT/NEAR as query
+    syntax, so passing user text through unchanged makes ordinary searches raise
+    OperationalError: "Jean-Baptiste" was read as a column filter, "2026-01-12"
+    as a subtraction, an odd quote as an unterminated string.
+
+    Each whitespace-separated token is wrapped in double quotes - which makes it
+    a literal phrase - with any inner quote doubled to escape it. Tokens are
+    joined by spaces, FTS5's implicit AND, so every term must still match.
+
+    Returns "" when nothing searchable remains, letting the caller fall back to
+    the LIKE search rather than issuing an empty MATCH.
+    """
+    tokens = [token for token in raw.strip().split() if token.strip('"')]
+    if not tokens:
+        return ""
+    return " ".join('"' + token.replace('"', '""') + '"' for token in tokens)
 
 
 def _split_terms(value: str) -> list[str]:

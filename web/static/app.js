@@ -229,9 +229,61 @@ async function loadFilters() {
   }
 }
 
+// L'ID interne est la clé stable d'une vidéo : il survit au renommage et au
+// déplacement dans Drive. On l'affiche partout et on le rend copiable en un clic.
+function renderInternalId(internalId) {
+  if (!internalId) {
+    return '<span class="internal-id internal-id-missing" title="Aucun ID interne : relancez un scan">—</span>';
+  }
+  const safe = escapeHtml(internalId);
+  return `<span class="internal-id"><code>${safe}</code><button type="button" class="copy-id-btn" data-copy-id="${escapeAttr(internalId)}" title="Copier ${safe}" aria-label="Copier ${safe}">⧉</button></span>`;
+}
+
+// Repli sans API Clipboard : celle-ci exige un contexte sécurisé (https), ce qui
+// n'est pas garanti en local ni dans un navigateur embarqué.
+function legacyCopy(value) {
+  try {
+    const field = document.createElement("textarea");
+    field.value = value;
+    field.setAttribute("readonly", "");
+    field.style.position = "fixed";
+    field.style.opacity = "0";
+    document.body.appendChild(field);
+    field.select();
+    const copied = document.execCommand("copy");
+    field.remove();
+    return copied;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function copyInternalId(button) {
+  const value = button.dataset.copyId;
+  const original = button.textContent;
+  let copied = false;
+  try {
+    if (window.isSecureContext && navigator.clipboard) {
+      await navigator.clipboard.writeText(value);
+      copied = true;
+    }
+  } catch (error) {
+    copied = false;
+  }
+  if (!copied) {
+    copied = legacyCopy(value);
+  }
+  button.textContent = copied ? "✓" : "!";
+  button.title = copied ? `${value} copié` : `Copie impossible — sélectionnez ${value}`;
+  window.setTimeout(() => {
+    button.textContent = original;
+    button.title = `Copier ${value}`;
+  }, 1200);
+}
+
 function renderRows(items) {
   if (!items.length) {
-    els.resultsBody.innerHTML = `<tr><td colspan="9" class="empty">Aucune vidéo ne correspond à ces filtres.</td></tr>`;
+    els.resultsBody.innerHTML = `<tr><td colspan="10" class="empty">Aucune vidéo ne correspond à ces filtres.</td></tr>`;
     return;
   }
 
@@ -239,6 +291,7 @@ function renderRows(items) {
     .map(
       (item) => `
       <tr>
+        <td>${renderInternalId(item.internal_video_id)}</td>
         <td>
           <div class="file-name">${escapeHtml(item.editorial_title || item.clean_title || item.file_name)}</div>
           <div class="row-badges">
@@ -288,6 +341,7 @@ async function showDetails(fileId) {
   const response = await fetch(`/api/videos/${fileId}`);
   const item = await response.json();
   const rows = [
+    ["ID interne", renderInternalId(item.internal_video_id)],
     ["Name", item.file_name],
     ["Folder", item.folder_path || "—"],
     ["Parent folder", item.parent_folder || "—"],
@@ -312,7 +366,7 @@ async function showDetails(fileId) {
       ([label, value]) => `
       <div class="detail-row">
         <span>${escapeHtml(label)}</span>
-        <div>${typeof value === "string" && value.startsWith("<a") ? value : escapeHtml(String(value))}</div>
+        <div>${typeof value === "string" && (value.startsWith("<a") || value.startsWith("<span class=\"internal-id")) ? value : escapeHtml(String(value))}</div>
       </div>`
     )
     .join("") + renderLabelEditor(item) + await renderWorkflowEditor(item) + renderChristianMetadataEditor(item);
@@ -756,6 +810,10 @@ els.nextPage.addEventListener("click", () => {
 els.resultsBody.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
+  if (target.classList.contains("copy-id-btn")) {
+    copyInternalId(target);
+    return;
+  }
   if (target.classList.contains("detail-btn")) {
     showDetails(target.dataset.id);
   }
@@ -772,6 +830,10 @@ els.detailContent.addEventListener("click", (event) => {
   }
   if (target.id === "saveLabelsButton") {
     saveLabels();
+  }
+  if (target.classList.contains("copy-id-btn")) {
+    copyInternalId(target);
+    return;
   }
   if (target.classList.contains("related-video-btn")) {
     showDetails(target.dataset.relatedId);

@@ -954,3 +954,39 @@ dialog article {
     grid-template-columns: 1fr;
   }
 }
+
+.internal-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.internal-id code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+
+.internal-id-missing {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.copy-id-btn {
+  padding: 2px 6px;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.copy-id-btn:hover {
+  opacity: 1;
+}

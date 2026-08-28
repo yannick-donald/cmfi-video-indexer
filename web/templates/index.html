@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ app_name }} — Video Library</title>
-  <link rel="stylesheet" href="/static/style.css?v=collaboration-4">
+  <link rel="stylesheet" href="/static/style.css?v=internal-id-1">
 </head>
 <body
   data-public-demo="{{ 'true' if public_demo else 'false' }}"
@@ -111,6 +111,7 @@
       <div class="toolbar-actions">
         <select id="sortBy">
           <option value="file_name">Sort: Name</option>
+          <option value="internal_video_id">Sort: ID interne</option>
           <option value="editorial_title">Sort: Editorial title</option>
           <option value="modified_at">Sort: Modified</option>
           <option value="file_size">Sort: Size</option>
@@ -252,6 +253,7 @@
           <table>
             <thead>
               <tr>
+                <th>ID</th>
                 <th>Name</th>
                 <th>Folder</th>
                 <th>Production</th>
@@ -365,6 +367,6 @@
   {% endif %}
 
   <datalist id="labelSuggestions"></datalist>
-  <script src="/static/app.js?v=collaboration-4"></script>
+  <script src="/static/app.js?v=internal-id-1"></script>
 </body>
 </html>
