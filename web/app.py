@@ -464,6 +464,14 @@ def create_app(settings: Settings) -> FastAPI:
         payload["completeness"] = _video_completeness(payload, payload["labels"])
         return payload
 
+    @app.get("/api/videos/{file_id}/title-suggestion")
+    async def suggest_title(file_id: str) -> dict[str, Any]:
+        """Propose a title. Read-only: nothing is saved until the user saves."""
+        suggestion = repo.suggest_editorial_title(file_id)
+        if not suggestion:
+            raise HTTPException(status_code=404, detail="Video not found")
+        return suggestion
+
     @app.put("/api/videos/{file_id}/metadata")
     async def update_video_metadata(file_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         _require_writable(settings)

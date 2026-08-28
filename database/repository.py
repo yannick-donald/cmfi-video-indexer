@@ -10,6 +10,7 @@ from typing import Any
 
 from database.models import VideoRecord
 from database.schema import init_database
+from metadata_cleaning.youtube_title import propose_title
 from utils.internal_ids import extract_internal_id
 
 SORT_COLUMNS = {
@@ -429,6 +430,66 @@ class VideoRepository:
                 {"file_id": file_id, "source_file_id": source_id, "source_internal_id": referenced}
                 for file_id, source_id, referenced in links
             ],
+        }
+
+    def suggest_editorial_title(self, file_id: str) -> dict[str, Any] | None:
+        """
+        Propose a publishable title for one video, without saving anything.
+
+        A cut inherits speaker, place and year from the raw video it came from,
+        so its own name only has to carry the focus of the extract.
+        """
+        video = self.get_video(file_id)
+        if not video:
+            return None
+
+        metadata = {
+            "speaker": video.speaker,
+            "preacher": video.preacher,
+            "location": video.location,
+            "event_date": video.event_date,
+            "content_type": video.content_type,
+            "session_number": video.session_number,
+            "main_theme": video.main_theme,
+        }
+
+        source_proposal = None
+        if video.asset_type == "cut" and video.source_file_id:
+            source = self.get_video(video.source_file_id)
+            if source:
+                source_proposal = propose_title(
+                    source.file_name,
+                    metadata={
+                        "speaker": source.speaker,
+                        "preacher": source.preacher,
+                        "location": source.location,
+                        "event_date": source.event_date,
+                        "content_type": source.content_type,
+                        "main_theme": source.main_theme,
+                    },
+                )
+                # A saved editorial title on the source is the best context there
+                # is, so it outranks anything re-derived from its file name.
+                if source.editorial_title.strip():
+                    source_proposal.title = source.editorial_title.strip()
+
+        proposal = propose_title(video.file_name, metadata=metadata, source=source_proposal)
+        return {
+            "file_id": file_id,
+            "title": proposal.title,
+            "confidence": proposal.confidence,
+            "notes": proposal.notes,
+            "current_title": video.editorial_title,
+            "is_cut": video.asset_type == "cut",
+            "source_title": source_proposal.title if source_proposal else "",
+            "fields": {
+                "speaker": proposal.speaker,
+                "location": proposal.location,
+                "event_date": proposal.event_date,
+                "content_type": proposal.content_type,
+                "session_number": proposal.session_number,
+                "source_medium": proposal.source_medium,
+            },
         }
 
     def get_workflow_stats(self) -> dict[str, Any]:

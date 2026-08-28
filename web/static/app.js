@@ -342,7 +342,8 @@ async function showDetails(fileId) {
   const item = await response.json();
   const rows = [
     ["ID interne", renderInternalId(item.internal_video_id)],
-    ["Name", item.file_name],
+    ["Titre", item.editorial_title || item.clean_title || item.file_name],
+    ["Nom du fichier", item.file_name],
     ["Folder", item.folder_path || "—"],
     ["Parent folder", item.parent_folder || "—"],
     ["Format", item.file_extension || "—"],
@@ -695,8 +696,12 @@ function renderChristianMetadataEditor(item) {
     <section class="metadata-editor">
       <div class="metadata-header">
         <h3>Métadonnées chrétiennes</h3>
-        ${appMode.readOnly ? "" : '<button id="saveMetadataButton" type="button">Save metadata</button>'}
+        <div class="metadata-actions">
+          ${appMode.readOnly ? "" : '<button id="suggestTitleButton" type="button" class="btn-secondary" title="Construit un titre publiable à partir du nom de fichier et des champs déjà renseignés">Proposer un titre</button>'}
+          ${appMode.readOnly ? "" : '<button id="saveMetadataButton" type="button">Save metadata</button>'}
+        </div>
       </div>
+      <p id="titleSuggestionStatus" class="filters-status"></p>
       <p class="metadata-hint">Sépare les listes par des points-virgules : foi; repentance; grâce.</p>
       <div class="metadata-grid">${fields}</div>
       <div class="metadata-terms">
@@ -705,6 +710,39 @@ function renderChristianMetadataEditor(item) {
       </div>
       <p id="metadataSaveStatus" class="filters-status"></p>
     </section>`;
+}
+
+async function suggestTitle() {
+  const button = document.getElementById("suggestTitleButton");
+  const status = document.getElementById("titleSuggestionStatus");
+  const field = els.detailContent.querySelector('[data-meta="editorial_title"]');
+  const fileId = els.detailContent.dataset.fileId;
+  if (!button || !field || !fileId) return;
+
+  button.disabled = true;
+  status.textContent = "Génération...";
+  try {
+    const response = await fetch(`/api/videos/${encodeURIComponent(fileId)}/title-suggestion`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (!data.title) {
+      status.textContent =
+        "Aucun titre proposable depuis le nom du fichier. Renseignez le thème, l'intervenant ou la date, puis relancez.";
+      return;
+    }
+    // On remplit le champ sans enregistrer : la validation reste humaine.
+    field.value = data.title;
+    const labels = { high: "exploitable", partial: "à relire", none: "incomplet" };
+    const extra = data.is_cut && data.source_title ? ` Contexte hérité de : « ${data.source_title} ».` : "";
+    const notes = (data.notes || []).length ? ` ${data.notes.join(" ")}` : "";
+    status.textContent =
+      `Proposition ${labels[data.confidence] || data.confidence} (${data.title.length} caractères).` +
+      `${extra}${notes} Rien n'est enregistré tant que vous n'avez pas cliqué sur « Save metadata ».`;
+  } catch (error) {
+    status.textContent = `Proposition impossible : ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function saveMetadata() {
@@ -913,6 +951,10 @@ els.resultsBody.addEventListener("click", (event) => {
 els.detailContent.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
+  if (target.id === "suggestTitleButton") {
+    suggestTitle();
+    return;
+  }
   if (target.id === "saveMetadataButton") {
     saveMetadata();
   }

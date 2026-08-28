@@ -1079,3 +1079,9 @@ dialog article {
   border-radius: 5px;
   padding: 1px 5px;
 }
+
+.metadata-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
