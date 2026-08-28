@@ -1210,3 +1210,20 @@ dialog article {
   color: var(--muted);
   font-weight: 600;
 }
+
+.user-name-input {
+  width: 100%;
+  max-width: 220px;
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
+/* Le tableau ne doit jamais élargir le dialogue : il défile dans son cadre. */
+.users-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.users-table {
+  min-width: 560px;
+}

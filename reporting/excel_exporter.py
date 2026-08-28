@@ -163,6 +163,8 @@ def _write_inventory(
     _style_header(sheet, _INVENTORY_COLUMNS)
     count = 0
 
+    display_names = repo.get_user_display_names()
+
     for chunk in _chunked(repo.iter_videos(filters), _CHUNK_SIZE):
         labels_map = repo.get_labels_map([video.file_id for video in chunk])
         for video in chunk:
@@ -177,7 +179,7 @@ def _write_inventory(
                     ASSET_LABELS.get(video.asset_type, video.asset_type),
                     WORKFLOW_LABELS.get(video.workflow_stage, video.workflow_stage),
                     ", ".join(str(label["name"]) for label in labels),
-                    video.assigned_user_email,
+                    display_names.get(video.assigned_user_email, video.assigned_user_email),
                     f"{_completeness_score(video, labels)}/{_COMPLETENESS_TOTAL}",
                     video.speaker,
                     video.preacher,

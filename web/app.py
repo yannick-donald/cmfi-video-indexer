@@ -63,6 +63,9 @@ def create_app(settings: Settings) -> FastAPI:
         token = request.cookies.get(settings.session_cookie_name, "")
         user = auth_repo.get_session_user(token) if token else None
         if user:
+            profile = auth_repo.get_user(int(user["id"]))
+            user["full_name"] = (profile or {}).get("full_name", "")
+            user["display_name"] = (profile or {}).get("display_name", user["email"])
             user["is_super_admin"] = _is_super_admin(settings, str(user["email"]))
             user["can_scan_drive"] = bool(_configured_scan_folder_id(repo, settings))
         request.state.user = user
@@ -95,6 +98,7 @@ def create_app(settings: Settings) -> FastAPI:
                 str(payload.get("email") or ""),
                 str(payload.get("password") or ""),
                 email_verified=not settings.email_verification_required,
+                full_name=str(payload.get("full_name") or ""),
             )
         except AuthError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -354,6 +358,15 @@ def create_app(settings: Settings) -> FastAPI:
             raise HTTPException(status_code=404, detail="Compte introuvable")
         return updated
 
+    @app.put("/api/admin/users/{user_id}/name")
+    async def set_user_name(request: Request, user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        _require_super_admin(settings, request.state.user)
+        _require_writable(settings)
+        updated = auth_repo.set_user_name(user_id, str(payload.get("full_name") or ""))
+        if not updated:
+            raise HTTPException(status_code=404, detail="Compte introuvable")
+        return updated
+
     @app.put("/api/videos/{file_id}/assignee")
     async def assign_video(request: Request, file_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Designate who works on a video. Reserved to the administrator."""
@@ -386,6 +399,9 @@ def create_app(settings: Settings) -> FastAPI:
             "assigned_user_email": video.assigned_user_email,
             "assigned_at": video.assigned_at,
             "assigned_by_email": video.assigned_by_email,
+            "assigned_user_name": repo.get_user_display_names().get(
+                video.assigned_user_email, video.assigned_user_email
+            ),
         }
 
     @app.get("/api/admin/drive-folder")
@@ -519,6 +535,7 @@ def create_app(settings: Settings) -> FastAPI:
 
         file_ids = [item.file_id for item in result.items]
         labels_map = repo.get_labels_map(file_ids)
+        display_names = repo.get_user_display_names()
         latest_label_edits = repo.get_latest_label_edits(file_ids)
         return {
             "total": result.total,
@@ -537,6 +554,9 @@ def create_app(settings: Settings) -> FastAPI:
                         labels_map.get(item.file_id, []),
                     ),
                     "last_label_edit": latest_label_edits.get(item.file_id),
+                    "assigned_user_name": display_names.get(
+                        item.assigned_user_email, item.assigned_user_email
+                    ),
                 }
                 for item in result.items
             ],
@@ -556,6 +576,9 @@ def create_app(settings: Settings) -> FastAPI:
         payload["label_history"] = repo.get_label_history(file_id)
         payload["last_label_edit"] = (
             payload["label_history"][0] if payload["label_history"] else None
+        )
+        payload["assigned_user_name"] = repo.get_user_display_names().get(
+            item.assigned_user_email, item.assigned_user_email
         )
         payload["is_new"] = not bool(item.reviewed_at)
         payload["completeness"] = _video_completeness(payload, payload["labels"])
@@ -728,9 +751,10 @@ def create_app(settings: Settings) -> FastAPI:
             yield "\ufeff"
             writer.writerow(CSV_COLUMNS)
             yield flush()
+            display_names = repo.get_user_display_names()
             for video in repo.iter_videos(filters):
                 labels = repo.get_video_labels(video.file_id)
-                writer.writerow(_csv_row(video, labels))
+                writer.writerow(_csv_row(video, labels, display_names))
                 yield flush()
 
         return StreamingResponse(
@@ -773,7 +797,7 @@ CSV_COLUMNS = [
 ]
 
 
-def _csv_row(video: Any, labels: list[dict[str, Any]]) -> list[Any]:
+def _csv_row(video: Any, labels: list[dict[str, Any]], display_names: dict[str, str] | None = None) -> list[Any]:
     return [
         video.internal_video_id,
         video.file_name,
@@ -783,7 +807,7 @@ def _csv_row(video: Any, labels: list[dict[str, Any]]) -> list[Any]:
         video.asset_type,
         video.workflow_stage,
         ", ".join(str(label["name"]) for label in labels),
-        video.assigned_user_email,
+        (display_names or {}).get(video.assigned_user_email, video.assigned_user_email),
         video.speaker,
         video.preacher,
         video.main_theme,

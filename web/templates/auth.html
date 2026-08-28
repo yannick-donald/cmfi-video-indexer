@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Connexion · {{ app_name }}</title>
-  <link rel="stylesheet" href="/static/style.css?v=auth-2">
+  <link rel="stylesheet" href="/static/style.css?v=auth-3">
 </head>
 <body class="auth-page">
   <main class="auth-shell">
@@ -20,6 +20,10 @@
       </div>
 
       <form id="authForm">
+        <label id="authNameField" hidden>
+          Nom et prénom
+          <input id="authName" type="text" autocomplete="name" maxlength="120" placeholder="Affiché à l'équipe à la place de l'e-mail">
+        </label>
         <label>
           Adresse e-mail
           <input id="authEmail" type="email" autocomplete="email" required>
@@ -79,6 +83,8 @@
       loginTab.classList.toggle("active", mode === "login");
       if (registerTab) registerTab.classList.toggle("active", mode === "register");
       submit.textContent = mode === "login" ? "Se connecter" : "Créer le compte";
+      const nameField = document.getElementById("authNameField");
+      if (nameField) nameField.hidden = mode !== "register";
       password.autocomplete = mode === "login" ? "current-password" : "new-password";
       status.textContent = "";
       form.hidden = false;
@@ -110,7 +116,11 @@
         const response = await fetch(`/api/auth/${mode}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: email.value, password: password.value }),
+          body: JSON.stringify({
+            email: email.value,
+            password: password.value,
+            full_name: document.getElementById("authName")?.value || "",
+          }),
         });
         const data = await response.json().catch(() => ({}));
         if (data.verification_required) {

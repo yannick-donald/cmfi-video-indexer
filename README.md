@@ -180,7 +180,11 @@ The collaborative dashboard also provides:
 
 Only the account matching `ADMIN_EMAIL` administers the team. **Gérer l'équipe**
 lists every account with how many videos it is responsible for, whether its
-e-mail is confirmed and when it last signed in, and enables or disables it.
+e-mail is confirmed and when it last signed in, renames it, and enables or
+disables it. A name is shown everywhere in place of the e-mail; new accounts can
+give one at sign-up, and the administrator can set or change it later. Names are
+resolved when a screen is drawn rather than copied onto each video, so renaming
+somebody updates the lists, the exports and the workload figures at once.
 Disabling drops that account's sessions at once, so an open browser stops
 working immediately rather than at cookie expiry. The administrator account
 cannot disable itself.

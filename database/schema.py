@@ -282,6 +282,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    _add_column_if_missing(conn, "users", "full_name", "TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email COLLATE NOCASE)")
     user_columns = _table_columns(conn, "users")
     if "email_verified_at" not in user_columns:

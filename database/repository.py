@@ -780,6 +780,21 @@ class VideoRepository:
             conn.commit()
         return VideoRecord.from_row(row) if row else None
 
+    def get_user_display_names(self) -> dict[str, str]:
+        """
+        Map e-mail -> name for everyone with an account.
+
+        The name is resolved at display time rather than copied onto each video,
+        so renaming somebody updates every screen at once instead of leaving
+        stale copies behind.
+        """
+        with self._connect() as conn:
+            rows = conn.execute("SELECT email, full_name FROM users").fetchall()
+        return {
+            row["email"]: (row["full_name"] or "").strip() or row["email"]
+            for row in rows
+        }
+
     def get_assignment_stats(self) -> dict[str, Any]:
         """Workload per person, so the admin can see how work is spread."""
         with self._connect() as conn:
@@ -796,8 +811,12 @@ class VideoRepository:
             unassigned = conn.execute(
                 "SELECT COUNT(*) FROM videos WHERE COALESCE(assigned_user_id, 0) = 0"
             ).fetchone()[0]
+        names = self.get_user_display_names()
         return {
-            "per_user": [dict(row) for row in rows],
+            "per_user": [
+                {**dict(row), "display_name": names.get(row["email"], row["email"])}
+                for row in rows
+            ],
             "unassigned": unassigned,
         }
 

@@ -55,8 +55,10 @@ class AuthRepository:
         password: str,
         *,
         email_verified: bool = False,
+        full_name: str = "",
     ) -> dict[str, Any]:
         normalized_email = _normalize_email(email)
+        cleaned_name = " ".join(full_name.split())[:120]
         _validate_password(password)
         salt = os.urandom(16)
         password_hash = _hash_password(password, salt)
@@ -65,10 +67,10 @@ class AuthRepository:
             with self._connect() as conn:
                 cursor = conn.execute(
                     """
-                    INSERT INTO users(email, password_hash, password_salt, email_verified_at)
-                    VALUES(?, ?, ?, ?)
+                    INSERT INTO users(email, password_hash, password_salt, email_verified_at, full_name)
+                    VALUES(?, ?, ?, ?, ?)
                     """,
-                    (normalized_email, password_hash.hex(), salt.hex(), email_verified_at),
+                    (normalized_email, password_hash.hex(), salt.hex(), email_verified_at, cleaned_name),
                 )
                 conn.commit()
                 user_id = int(cursor.lastrowid)
@@ -77,6 +79,8 @@ class AuthRepository:
         return {
             "id": user_id,
             "email": normalized_email,
+            "full_name": cleaned_name,
+            "display_name": cleaned_name or normalized_email,
             "email_verified": email_verified,
         }
 
@@ -338,7 +342,7 @@ class AuthRepository:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, email, is_active, created_at, last_login_at,
+                SELECT id, email, full_name, is_active, created_at, last_login_at,
                        email_verified_at
                 FROM users
                 ORDER BY email COLLATE NOCASE
@@ -348,6 +352,8 @@ class AuthRepository:
             {
                 "id": row["id"],
                 "email": row["email"],
+                "full_name": row["full_name"] or "",
+                "display_name": (row["full_name"] or "").strip() or row["email"],
                 "is_active": bool(row["is_active"]),
                 "email_verified": bool(row["email_verified_at"]),
                 "created_at": row["created_at"] or "",
@@ -359,11 +365,27 @@ class AuthRepository:
     def get_user(self, user_id: int) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT id, email, is_active FROM users WHERE id = ?", (user_id,)
+                "SELECT id, email, full_name, is_active FROM users WHERE id = ?", (user_id,)
             ).fetchone()
         if not row:
             return None
-        return {"id": row["id"], "email": row["email"], "is_active": bool(row["is_active"])}
+        return {
+            "id": row["id"],
+            "email": row["email"],
+            "full_name": row["full_name"] or "",
+            "display_name": (row["full_name"] or "").strip() or row["email"],
+            "is_active": bool(row["is_active"]),
+        }
+
+    def set_user_name(self, user_id: int, full_name: str) -> dict[str, Any] | None:
+        """Set the name shown instead of the e-mail. An empty name falls back to it."""
+        cleaned = " ".join(full_name.split())[:120]
+        with self._connect() as conn:
+            if not conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
+                return None
+            conn.execute("UPDATE users SET full_name = ? WHERE id = ?", (cleaned, user_id))
+            conn.commit()
+        return self.get_user(user_id)
 
     def set_user_active(self, user_id: int, is_active: bool) -> dict[str, Any] | None:
         """

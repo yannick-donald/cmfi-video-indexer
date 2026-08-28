@@ -221,7 +221,7 @@ async function populateAssigneeFilter() {
   const current = els.assigneeFilter.value;
   els.assigneeFilter.innerHTML =
     `<option value="">Tout le monde</option><option value="__none__">Non affectées</option>` +
-    team.map((user) => `<option value="${escapeAttr(user.email)}">${escapeHtml(user.email)}</option>`).join("");
+    team.map((user) => `<option value="${escapeAttr(user.email)}">${escapeHtml(user.display_name)}</option>`).join("");
   els.assigneeFilter.value = current;
 }
 
@@ -385,7 +385,7 @@ function renderAssignee(item, team) {
     return `
       <section class="assignee-block">
         <h3>Responsable</h3>
-        <p class="assignee-current">${current ? escapeHtml(current) : "Personne n'est encore désigné."}</p>
+        <p class="assignee-current">${current ? escapeHtml(item.assigned_user_name || current) : "Personne n'est encore désigné."}</p>
         ${meta}
       </section>`;
   }
@@ -395,7 +395,7 @@ function renderAssignee(item, team) {
         .filter((user) => user.is_active || user.email === current)
         .map(
           (user) =>
-            `<option value="${escapeAttr(user.id)}" ${user.email === current ? "selected" : ""}>${escapeHtml(user.email)}${user.is_active ? "" : " (désactivé)"}</option>`
+            `<option value="${escapeAttr(user.id)}" ${user.email === current ? "selected" : ""}>${escapeHtml(user.display_name)}${user.is_active ? "" : " (désactivé)"}</option>`
         )
     )
     .join("");
@@ -449,7 +449,10 @@ async function loadUsersPanel() {
       .map(
         (user) => `
         <tr>
-          <td>${escapeHtml(user.email)}${user.is_super_admin ? ' <span class="new-badge">admin</span>' : ""}</td>
+          <td>
+            <input class="user-name-input" type="text" value="${escapeAttr(user.full_name)}" placeholder="Nom" data-user-id="${escapeAttr(user.id)}">
+            <div class="folder-path">${escapeHtml(user.email)}${user.is_super_admin ? ' · admin' : ""}</div>
+          </td>
           <td>${charge[user.email] || 0}</td>
           <td>${user.email_verified ? "oui" : "non"}</td>
           <td>${user.last_login_at ? escapeHtml(formatDate(user.last_login_at)) : "jamais"}</td>
@@ -462,14 +465,34 @@ async function loadUsersPanel() {
       )
       .join("");
     els.usersContent.innerHTML = `
+      <div class="users-table-wrap">
       <table class="users-table">
-        <thead><tr><th>Compte</th><th>Vidéos</th><th>Vérifié</th><th>Dernière connexion</th><th></th></tr></thead>
+        <thead><tr><th>Nom et compte</th><th>Vidéos</th><th>Vérifié</th><th>Dernière connexion</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
+      </div>
       <p class="metadata-hint">${data.assignments?.unassigned ?? 0} vidéo(s) sans responsable désigné.</p>
       <p id="usersStatus" class="filters-status"></p>`;
   } catch (error) {
     els.usersContent.innerHTML = `<p class="source-empty">Chargement impossible : ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function saveUserName(input) {
+  const status = document.getElementById("usersStatus");
+  try {
+    const response = await fetch(`/api/admin/users/${input.dataset.userId}/name`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ full_name: input.value }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    teamCache = null;
+    if (status) status.textContent = `Nom enregistré : ${data.display_name}.`;
+    await Promise.all([populateAssigneeFilter(), loadVideos()]);
+  } catch (error) {
+    if (status) status.textContent = `Échec : ${error.message}`;
   }
 }
 
@@ -584,7 +607,7 @@ function renderRows(items) {
           </div>
           ${item.editorial_title || item.clean_title ? `<div class="folder-path">${escapeHtml(item.file_name)}</div>` : ""}
           <div class="folder-path">${escapeHtml(item.owner || "Unknown owner")}</div>
-          ${item.assigned_user_email ? `<div class="assignee-badge" title="Désignée pour travailler dessus">👤 ${escapeHtml(item.assigned_user_email)}</div>` : ""}
+          ${item.assigned_user_email ? `<div class="assignee-badge" title="Désignée pour travailler dessus : ${escapeAttr(item.assigned_user_email)}">👤 ${escapeHtml(item.assigned_user_name || item.assigned_user_email)}</div>` : ""}
           ${renderLabelBadges(item.labels || [])}
           ${item.last_label_edit ? `<div class="label-edit-by">Labels : ${escapeHtml(item.last_label_edit.user_email)} · ${escapeHtml(formatDate(item.last_label_edit.created_at))}</div>` : ""}
         </td>
@@ -1213,6 +1236,9 @@ if (els.openUsersButton) {
   els.openUsersButton.addEventListener("click", () => {
     els.usersDialog.showModal();
     loadUsersPanel();
+  });
+  els.usersContent.addEventListener("change", (event) => {
+    if (event.target.classList.contains("user-name-input")) saveUserName(event.target);
   });
   els.usersContent.addEventListener("click", (event) => {
     const button = event.target.closest(".toggle-user-btn");
