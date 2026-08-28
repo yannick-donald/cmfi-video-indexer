@@ -587,7 +587,8 @@ async function renderWorkflowEditor(item) {
           ${appMode.readOnly ? "" : `
             <input id="sourceSearchInput" type="search" autocomplete="off"
                    placeholder="Rechercher par ID interne (CHR-VID-000123), titre ou nom de fichier">
-            <div id="sourceSearchResults" class="source-results" hidden></div>`}
+            <div id="sourceSearchResults" class="source-results" hidden></div>
+            <p class="source-hint">Astuce : nommez la découpe <code>CHR-VID-000123 - Titre.mp4</code> dans Drive et elle sera rattachée automatiquement au prochain scan.</p>`}
           <div id="sourceSelected">${renderSelectedSource(related.source)}</div>
         </div>
         <label class="metadata-field metadata-field-wide">
@@ -990,7 +991,10 @@ async function pollFolderScan() {
     return;
   }
   if (data.status === "succeeded") {
-    els.scanFolderStatus.textContent = `Terminé : ${data.videos_indexed} ajoutées ou mises à jour, ${data.videos_skipped} inchangées, ${data.errors} erreurs.`;
+    const linked = data.cuts_linked
+      ? ` ${data.cuts_linked} découpe(s) rattachée(s) automatiquement.`
+      : "";
+    els.scanFolderStatus.textContent = `Terminé : ${data.videos_indexed} ajoutées ou mises à jour, ${data.videos_skipped} inchangées, ${data.errors} erreurs.${linked}`;
     els.scanFolderButton.disabled = false;
     await Promise.all([loadStats(), loadWorkflowStats(), loadVideos(), loadFilters()]);
     return;

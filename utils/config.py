@@ -37,6 +37,10 @@ class Settings(BaseSettings):
 
     incremental: bool = Field(default=True, alias="INCREMENTAL")
 
+    # Attache automatiquement une découpe à sa source quand le nom du fichier
+    # contient l'ID interne de la vidéo brute (CHR-VID-000123).
+    auto_link_cuts: bool = Field(default=True, alias="AUTO_LINK_CUTS")
+
     web_host: str = Field(default="127.0.0.1", alias="WEB_HOST")
     web_port: int = Field(default=8080, alias="WEB_PORT")
     public_demo: bool = Field(default=False, alias="PUBLIC_DEMO")

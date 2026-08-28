@@ -275,6 +275,7 @@ def create_app(settings: Settings) -> FastAPI:
                     "videos_indexed": 0,
                     "videos_skipped": 0,
                     "folders_scanned": 0,
+                    "cuts_linked": 0,
                     "errors": 0,
                     "message": "Analyse du dossier Drive en cours",
                 },
@@ -742,6 +743,7 @@ _IDLE_SCAN_STATE: dict[str, Any] = {
     "videos_indexed": 0,
     "videos_skipped": 0,
     "folders_scanned": 0,
+    "cuts_linked": 0,
     "errors": 0,
     "message": "",
 }
@@ -919,6 +921,7 @@ async def _run_drive_scan(
                 "videos_indexed": result.videos_indexed,
                 "videos_skipped": result.videos_skipped,
                 "folders_scanned": result.folders_scanned,
+                "cuts_linked": result.cuts_linked,
                 "errors": result.errors,
                 "message": "Scan terminé",
             },

@@ -39,6 +39,7 @@ class ScanResult:
     videos_indexed: int = 0
     videos_skipped: int = 0
     folders_scanned: int = 0
+    cuts_linked: int = 0
     errors: int = 0
     error_messages: list[str] = field(default_factory=list)
 
@@ -138,11 +139,31 @@ class DriveScanner:
                 LOGGER.exception(msg)
 
         pbar.close()
+
+        # Runs after indexing, not per video: a cut can name a source that this
+        # same scan is still discovering, so the whole library must be in place
+        # before the names are resolved.
+        if self.settings.auto_link_cuts:
+            try:
+                linked = self.repo.auto_link_cuts_by_filename()
+                result.cuts_linked = int(linked["linked"])
+                if result.cuts_linked:
+                    LOGGER.info(
+                        "Auto-linked %s cut(s) to their source from the file name",
+                        result.cuts_linked,
+                    )
+            except Exception as exc:
+                # Never fail an otherwise good scan over the convenience pass.
+                result.errors += 1
+                result.error_messages.append(f"Auto-link cuts: {exc}")
+                LOGGER.exception("Auto-linking cuts failed")
+
         LOGGER.info(
-            "Scan complete: %s videos found, %s indexed, %s skipped, %s errors",
+            "Scan complete: %s videos found, %s indexed, %s skipped, %s linked, %s errors",
             result.videos_found,
             result.videos_indexed,
             result.videos_skipped,
+            result.cuts_linked,
             result.errors,
         )
         return result

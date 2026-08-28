@@ -10,6 +10,7 @@ from typing import Any
 
 from database.models import VideoRecord
 from database.schema import init_database
+from utils.internal_ids import extract_internal_id
 
 SORT_COLUMNS = {
     "file_name": "file_name COLLATE NOCASE",
@@ -343,6 +344,92 @@ class VideoRepository:
             row = conn.execute("SELECT * FROM videos WHERE file_id = ?", (file_id,)).fetchone()
             conn.commit()
         return VideoRecord.from_row(row) if row else None
+
+    def auto_link_cuts_by_filename(self) -> dict[str, Any]:
+        """
+        Link cuts to their source using the internal ID written in the file name.
+
+        An editor working outside the app names the cut "CHR-VID-000199 -
+        Extrait.mp4"; the next scan reads that ID and attaches the cut to
+        CHR-VID-000199 on its own.
+
+        Deliberately conservative - it only ever fills a blank:
+
+        - a video that already has a source is never touched;
+        - a video whose workflow a human has saved is never touched, since
+          workflow_updated_at is set only by update_workflow, i.e. only when
+          somebody actually chose an asset type. Editing a title or a label does
+          not count, so ordinary curation does not opt a video out;
+        - the target must exist, be a different video, and be raw;
+        - a video that is itself about to become a cut cannot be a source, which
+          keeps the graph one level deep and rules out cycles.
+
+        Returns the count and the pairs it created, for logging and reporting.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT file_id, file_name, internal_video_id, asset_type,
+                       COALESCE(source_file_id, '') AS source_file_id,
+                       COALESCE(workflow_updated_at, '') AS workflow_updated_at
+                FROM videos
+                """
+            ).fetchall()
+
+            by_internal_id = {
+                str(row["internal_video_id"]): row
+                for row in rows
+                if row["internal_video_id"]
+            }
+
+            candidates = [
+                row
+                for row in rows
+                if not row["source_file_id"] and not row["workflow_updated_at"]
+            ]
+
+            # Resolve every link against the state before any write, so the
+            # outcome does not depend on iteration order.
+            proposed: list[tuple[str, str, str]] = []
+            for row in candidates:
+                referenced = extract_internal_id(str(row["file_name"] or ""))
+                if not referenced:
+                    continue
+                target = by_internal_id.get(referenced)
+                if target is None or target["file_id"] == row["file_id"]:
+                    continue
+                if target["asset_type"] != "raw":
+                    continue
+                proposed.append((str(row["file_id"]), str(target["file_id"]), referenced))
+
+            becoming_cuts = {file_id for file_id, _, _ in proposed}
+            links = [
+                (file_id, source_id, referenced)
+                for file_id, source_id, referenced in proposed
+                if source_id not in becoming_cuts
+            ]
+
+            for file_id, source_id, _ in links:
+                conn.execute(
+                    """
+                    UPDATE videos
+                    SET asset_type = 'cut', source_file_id = ?
+                    WHERE file_id = ?
+                    """,
+                    (source_id, file_id),
+                )
+            if links:
+                conn.commit()
+
+        skipped_chain = len(proposed) - len(links)
+        return {
+            "linked": len(links),
+            "skipped_chained_source": skipped_chain,
+            "pairs": [
+                {"file_id": file_id, "source_file_id": source_id, "source_internal_id": referenced}
+                for file_id, source_id, referenced in links
+            ],
+        }
 
     def get_workflow_stats(self) -> dict[str, Any]:
         with self._connect() as conn:

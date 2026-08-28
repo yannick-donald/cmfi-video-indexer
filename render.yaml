@@ -62,6 +62,8 @@ services:
         sync: false
       - key: GOOGLE_SERVICE_ACCOUNT_JSON
         sync: false
+      - key: AUTO_LINK_CUTS
+        value: "true"
       - key: ENABLE_FFPROBE
         value: "false"
       - key: LOG_LEVEL

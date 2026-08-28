@@ -173,7 +173,25 @@ The collaborative dashboard also provides:
 - a viewer guide with the meaning of every production status;
 - normalized reusable labels and the e-mail of the last label editor;
 - a complete label change history in each video detail;
-- Excel and CSV exports of the filtered library.
+- Excel and CSV exports of the filtered library;
+- automatic linking of a cut video to the raw video it came from.
+
+### Linking a cut to its source
+
+Every video carries a stable internal ID (`CHR-VID-000123`), shown in the
+results table and in the detail panel, copyable in one click. It is derived from
+the Drive file ID, so it survives renaming and moving the file in Drive.
+
+To attach a cut to its source, open the video, set **Type de fichier** to
+*Vidéo découpée*, then search the source by internal ID, title, file name or
+folder. Pasting an ID puts the exact match first.
+
+An editor working outside the app can skip that step entirely: naming the cut
+`CHR-VID-000123 - Extrait.mp4` in Drive is enough, and the next scan attaches it
+on its own. The pass only ever fills a blank - it never overwrites an existing
+link, never touches a video whose workflow someone has saved, requires the
+target to be an existing raw video, and refuses a source that is itself becoming
+a cut. Set `AUTO_LINK_CUTS=false` to disable it.
 
 A Drive scan started from the dashboard records its progress in the database,
 so a scan cut short by a service restart is reported as **interrupted** on the
