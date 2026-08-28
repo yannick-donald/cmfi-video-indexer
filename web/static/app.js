@@ -89,6 +89,8 @@ const els = {
   searchDriveFoldersButton: document.getElementById("searchDriveFoldersButton"),
   driveFolderSearchResults: document.getElementById("driveFolderSearchResults"),
   labelSuggestions: document.getElementById("labelSuggestions"),
+  exportExcelButton: document.getElementById("exportExcelButton"),
+  exportCsvButton: document.getElementById("exportCsvButton"),
 };
 
 function buildQueryParams() {
@@ -120,6 +122,46 @@ function buildQueryParams() {
   params.set("page", String(state.page));
   params.set("page_size", String(state.pageSize));
   return params;
+}
+
+// Pagination, sorting and the semantic toggle shape the on-screen page, not the
+// export: a report always covers every row matching the active filters.
+const EXPORT_IGNORED_PARAMS = ["page", "page_size", "sort_by", "sort_dir", "semantic"];
+
+function buildExportUrl(path) {
+  const params = buildQueryParams();
+  EXPORT_IGNORED_PARAMS.forEach((key) => params.delete(key));
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}
+
+async function downloadExport(button, path, fallbackName) {
+  if (!button) return;
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = "Préparation...";
+  try {
+    const response = await fetch(buildExportUrl(path));
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const disposition = response.headers.get("content-disposition") || "";
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = match ? match[1] : fallbackName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    window.alert(`L'export a échoué : ${error.message}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
 }
 
 function fillSelect(select, values, placeholder) {
@@ -694,6 +736,12 @@ els.trackingFilter.addEventListener("change", () => {
 });
 
 els.resetFilters.addEventListener("click", resetFilters);
+els.exportExcelButton.addEventListener("click", () =>
+  downloadExport(els.exportExcelButton, "/api/export/inventory.xlsx", "inventaire.xlsx")
+);
+els.exportCsvButton.addEventListener("click", () =>
+  downloadExport(els.exportCsvButton, "/api/export/videos.csv", "inventaire.csv")
+);
 els.prevPage.addEventListener("click", () => {
   if (state.page > 1) {
     state.page -= 1;

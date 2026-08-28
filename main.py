@@ -10,6 +10,7 @@ import uvicorn
 from database.models import VideoRecord
 from database.repository import VideoRepository
 from drive_scanner.runner import run_scan
+from reporting.excel_exporter import export_to_path
 from utils.config import Settings
 from utils.logging import configure_logging
 from web.app import create_app
@@ -104,10 +105,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     scan_parser = subparsers.add_parser("scan", help="Scan Google Drive and index videos into SQLite")
     scan_parser.add_argument("--full", action="store_true", help="Ignore incremental cache and rescan all videos")
+    scan_parser.add_argument("--no-export", action="store_true", help="Skip writing the Excel report after the scan")
 
     run_parser = subparsers.add_parser("run", help="Scan Drive then open the web dashboard")
     run_parser.add_argument("--full", action="store_true", help="Full rescan (not incremental)")
     run_parser.add_argument("--no-serve", action="store_true", help="Scan only, do not start web UI")
+    run_parser.add_argument("--no-export", action="store_true", help="Skip writing the Excel report after the scan")
     run_parser.add_argument("--host", default=None)
     run_parser.add_argument("--port", type=int, default=None)
 
@@ -116,8 +119,32 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--port", type=int, default=None)
     serve_parser.add_argument("--reload", action="store_true")
 
+    export_parser = subparsers.add_parser(
+        "export", help="Write the multi-sheet Excel inventory from the current index"
+    )
+    export_parser.add_argument(
+        "--output",
+        default=None,
+        help="Destination .xlsx path (defaults to EXCEL_OUTPUT_PATH)",
+    )
+
     subparsers.add_parser("seed-demo", help="Insert demo videos for testing the web UI")
     return parser
+
+
+def write_report(settings: Settings, output: str | None = None) -> Path:
+    repo = VideoRepository(settings.db_path)
+    destination = Path(output) if output else settings.excel_output_path
+    summary = export_to_path(repo, destination)
+    logging.getLogger("main").info(
+        "Excel report: %s (%s videos, %s groupes de doublons, %s dossiers, %s erreurs)",
+        summary.output_path,
+        summary.videos,
+        summary.duplicate_groups,
+        summary.folders,
+        summary.errors,
+    )
+    return destination
 
 
 def main() -> int:
@@ -135,6 +162,10 @@ def main() -> int:
         logger.info("Demo videos inserted into %s", settings.db_path)
         return 0
 
+    if args.command == "export":
+        write_report(settings, args.output)
+        return 0
+
     if args.command == "scan":
         result = run_scan(settings, full=args.full)
         logger.info(
@@ -143,6 +174,8 @@ def main() -> int:
             result.videos_skipped,
             result.errors,
         )
+        if not args.no_export:
+            write_report(settings)
         return 0
 
     if args.command == "run":
@@ -153,6 +186,8 @@ def main() -> int:
             result.videos_skipped,
             result.errors,
         )
+        if not args.no_export:
+            write_report(settings)
         if args.no_serve:
             return 0
         host = args.host or settings.web_host

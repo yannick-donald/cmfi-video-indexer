@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -19,6 +21,7 @@ from auth.drive_auth import authenticate
 from drive_scanner.client import build_drive_service
 from drive_scanner.scanner import FOLDER_MIME
 from drive_scanner.runner import run_scan
+from reporting.excel_exporter import export_to_stream
 from utils.config import Settings
 from utils.formatters import format_bytes, format_duration
 
@@ -380,22 +383,12 @@ def create_app(settings: Settings) -> FastAPI:
             raise HTTPException(status_code=400, detail="Invalid sort column")
 
         result = repo.search(
-            SearchFilters(
-                query=q,
-                folder=folder,
-                extension=extension,
-                resolution=resolution,
-                year=year,
-                shared_drive=shared_drive,
-                min_size_mb=min_size_mb,
-                max_size_mb=max_size_mb,
-                min_duration_sec=min_duration_sec,
-                max_duration_sec=max_duration_sec,
-                has_audio=has_audio,
-                asset_type=asset_type,
-                workflow_stage=workflow_stage,
-                label=label,
-                tracking=tracking,
+            _search_filters(
+                q=q, folder=folder, extension=extension, resolution=resolution, year=year,
+                shared_drive=shared_drive, min_size_mb=min_size_mb, max_size_mb=max_size_mb,
+                min_duration_sec=min_duration_sec, max_duration_sec=max_duration_sec,
+                has_audio=has_audio, asset_type=asset_type, workflow_stage=workflow_stage,
+                label=label, tracking=tracking,
             ),
             sort_by=sort_by,
             sort_dir=sort_dir,
@@ -504,7 +497,188 @@ def create_app(settings: Settings) -> FastAPI:
             "last_label_edit": history[0] if history else None,
         }
 
+    @app.get("/api/export/inventory.xlsx")
+    async def export_inventory(
+        q: str = Query(default=""),
+        folder: str = Query(default=""),
+        extension: str = Query(default=""),
+        resolution: str = Query(default=""),
+        year: str = Query(default=""),
+        shared_drive: str = Query(default=""),
+        min_size_mb: float | None = Query(default=None),
+        max_size_mb: float | None = Query(default=None),
+        min_duration_sec: float | None = Query(default=None),
+        max_duration_sec: float | None = Query(default=None),
+        has_audio: bool | None = Query(default=None),
+        asset_type: str = Query(default=""),
+        workflow_stage: str = Query(default=""),
+        label: str = Query(default=""),
+        tracking: str = Query(default=""),
+    ) -> Response:
+        """
+        Multi-sheet Excel report. The Inventaire sheet honours the current
+        dashboard filters; the Statistiques, Doublons, Arborescence and Erreurs
+        sheets always describe the whole library.
+        """
+        filters = _search_filters(
+            q=q, folder=folder, extension=extension, resolution=resolution, year=year,
+            shared_drive=shared_drive, min_size_mb=min_size_mb, max_size_mb=max_size_mb,
+            min_duration_sec=min_duration_sec, max_duration_sec=max_duration_sec,
+            has_audio=has_audio, asset_type=asset_type, workflow_stage=workflow_stage,
+            label=label, tracking=tracking,
+        )
+
+        def build() -> bytes:
+            buffer = io.BytesIO()
+            export_to_stream(repo, buffer, filters)
+            return buffer.getvalue()
+
+        payload = await asyncio.to_thread(build)
+        return Response(
+            content=payload,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{_export_filename("xlsx")}"'},
+        )
+
+    @app.get("/api/export/videos.csv")
+    async def export_videos_csv(
+        q: str = Query(default=""),
+        folder: str = Query(default=""),
+        extension: str = Query(default=""),
+        resolution: str = Query(default=""),
+        year: str = Query(default=""),
+        shared_drive: str = Query(default=""),
+        min_size_mb: float | None = Query(default=None),
+        max_size_mb: float | None = Query(default=None),
+        min_duration_sec: float | None = Query(default=None),
+        max_duration_sec: float | None = Query(default=None),
+        has_audio: bool | None = Query(default=None),
+        asset_type: str = Query(default=""),
+        workflow_stage: str = Query(default=""),
+        label: str = Query(default=""),
+        tracking: str = Query(default=""),
+    ) -> StreamingResponse:
+        """Flat CSV of the filtered videos, streamed so large libraries do not buffer."""
+        filters = _search_filters(
+            q=q, folder=folder, extension=extension, resolution=resolution, year=year,
+            shared_drive=shared_drive, min_size_mb=min_size_mb, max_size_mb=max_size_mb,
+            min_duration_sec=min_duration_sec, max_duration_sec=max_duration_sec,
+            has_audio=has_audio, asset_type=asset_type, workflow_stage=workflow_stage,
+            label=label, tracking=tracking,
+        )
+
+        def rows() -> Any:
+            buffer = io.StringIO()
+            writer = csv.writer(buffer, lineterminator="\n")
+
+            def flush() -> str:
+                value = buffer.getvalue()
+                buffer.seek(0)
+                buffer.truncate(0)
+                return value
+
+            # UTF-8 BOM so Excel opens accented French headers correctly.
+            yield "\ufeff"
+            writer.writerow(CSV_COLUMNS)
+            yield flush()
+            for video in repo.iter_videos(filters):
+                labels = repo.get_video_labels(video.file_id)
+                writer.writerow(_csv_row(video, labels))
+                yield flush()
+
+        return StreamingResponse(
+            rows(),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{_export_filename("csv")}"'},
+        )
+
     return app
+
+
+CSV_COLUMNS = [
+    "id_interne",
+    "nom_fichier",
+    "titre_editorial",
+    "dossier",
+    "lecteur_partage",
+    "type_actif",
+    "etape_production",
+    "labels",
+    "intervenant",
+    "predicateur",
+    "theme_principal",
+    "type_contenu",
+    "evenement",
+    "date_evenement",
+    "serie",
+    "langue",
+    "taille_octets",
+    "duree_secondes",
+    "resolution",
+    "codec_video",
+    "codec_audio",
+    "extension",
+    "proprietaire",
+    "cree_le",
+    "modifie_le",
+    "lien_drive",
+]
+
+
+def _csv_row(video: Any, labels: list[dict[str, Any]]) -> list[Any]:
+    return [
+        video.internal_video_id,
+        video.file_name,
+        video.editorial_title,
+        video.folder_path,
+        video.shared_drive_name,
+        video.asset_type,
+        video.workflow_stage,
+        ", ".join(str(label["name"]) for label in labels),
+        video.speaker,
+        video.preacher,
+        video.main_theme,
+        video.content_type,
+        video.event_name,
+        video.event_date,
+        video.series_name,
+        video.language,
+        video.file_size,
+        video.duration_seconds if video.duration_seconds is not None else "",
+        video.resolution,
+        video.video_codec,
+        video.audio_codec,
+        video.file_extension,
+        video.owner,
+        video.created_at,
+        video.modified_at,
+        video.drive_url,
+    ]
+
+
+def _export_filename(suffix: str) -> str:
+    return f"cmfi-inventaire-video-{datetime.now(UTC).strftime('%Y%m%d-%H%M')}.{suffix}"
+
+
+def _search_filters(**kwargs: Any) -> SearchFilters:
+    """Build SearchFilters from the query parameters shared by search and export."""
+    return SearchFilters(
+        query=kwargs["q"],
+        folder=kwargs["folder"],
+        extension=kwargs["extension"],
+        resolution=kwargs["resolution"],
+        year=kwargs["year"],
+        shared_drive=kwargs["shared_drive"],
+        min_size_mb=kwargs["min_size_mb"],
+        max_size_mb=kwargs["max_size_mb"],
+        min_duration_sec=kwargs["min_duration_sec"],
+        max_duration_sec=kwargs["max_duration_sec"],
+        has_audio=kwargs["has_audio"],
+        asset_type=kwargs["asset_type"],
+        workflow_stage=kwargs["workflow_stage"],
+        label=kwargs["label"],
+        tracking=kwargs["tracking"],
+    )
 
 
 def _require_writable(settings: Settings) -> None:

@@ -5,6 +5,7 @@ import json
 import unicodedata
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from collections.abc import Iterator
 from typing import Any
 
 from database.models import VideoRecord
@@ -1001,6 +1002,100 @@ class VideoRepository:
                 for row in longest
             ],
         }
+
+    def iter_videos(
+        self,
+        filters: SearchFilters | None = None,
+        *,
+        sort_by: str = "folder_path",
+        sort_dir: str = "asc",
+        batch_size: int = 500,
+    ) -> Iterator[VideoRecord]:
+        """
+        Stream every video matching the filters, without pagination.
+
+        Used by the report exporter, which must not hold the whole library in
+        memory at once.
+        """
+        where, params = self._build_where(filters or SearchFilters())
+        sort_col = SORT_COLUMNS.get(sort_by, SORT_COLUMNS["file_name"])
+        direction = "DESC" if sort_dir.lower() == "desc" else "ASC"
+        sql = f"SELECT * FROM videos {where} ORDER BY {sort_col} {direction}, file_name ASC"
+
+        conn = self._connect()
+        try:
+            cursor = conn.execute(sql, params)
+            while True:
+                rows = cursor.fetchmany(batch_size)
+                if not rows:
+                    break
+                for row in rows:
+                    yield VideoRecord.from_row(row)
+        finally:
+            conn.close()
+
+    def get_duplicate_candidates(self) -> list[dict[str, Any]]:
+        """Minimal columns needed to detect duplicates, for the whole library."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT file_id, file_name, folder_path, drive_url, internal_video_id,
+                       file_size, duration_seconds, modified_at
+                FROM videos
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_folder_summary(self) -> list[dict[str, Any]]:
+        """Per-folder counts and sizes, deepest-first by path for readability."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    COALESCE(NULLIF(folder_path, ''), '(racine)') AS folder_path,
+                    COALESCE(NULLIF(parent_folder, ''), '') AS parent_folder,
+                    COALESCE(NULLIF(shared_drive_name, ''), '') AS shared_drive_name,
+                    COUNT(*) AS video_count,
+                    COALESCE(SUM(file_size), 0) AS total_bytes,
+                    COALESCE(SUM(duration_seconds), 0) AS total_duration_seconds,
+                    SUM(CASE WHEN asset_type = 'raw' THEN 1 ELSE 0 END) AS raw_count,
+                    SUM(CASE WHEN asset_type = 'cut' THEN 1 ELSE 0 END) AS cut_count,
+                    MIN(NULLIF(modified_at, '')) AS first_modified_at,
+                    MAX(NULLIF(modified_at, '')) AS last_modified_at
+                FROM videos
+                GROUP BY folder_path, parent_folder, shared_drive_name
+                ORDER BY folder_path COLLATE NOCASE
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_error_records(self) -> list[dict[str, Any]]:
+        """Videos the scanner could not fully process."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT file_id, file_name, folder_path, drive_url, scan_status,
+                       error_message, last_scanned_at
+                FROM videos
+                WHERE (error_message IS NOT NULL AND error_message != '')
+                   OR (scan_status IS NOT NULL AND scan_status NOT IN ('indexed', ''))
+                ORDER BY last_scanned_at DESC, file_name COLLATE NOCASE
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_recent_scan_runs(self, limit: int = 20) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT started_at, finished_at, status, videos_found, errors
+                FROM scan_runs
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def _build_where(self, filters: SearchFilters) -> tuple[str, list[Any]]:
         clauses: list[str] = []
