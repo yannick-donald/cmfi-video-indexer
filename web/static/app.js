@@ -456,15 +456,103 @@ async function saveLabels() {
   }
 }
 
+let sourceSearchTimer = null;
+
+function currentDetailFileId() {
+  return els.detailContent.dataset.fileId || "";
+}
+
+async function runSourceSearch(term) {
+  const results = document.getElementById("sourceSearchResults");
+  if (!results) return;
+  const params = new URLSearchParams({
+    exclude_file_id: currentDetailFileId(),
+    limit: "12",
+  });
+  if (term.trim()) params.set("q", term.trim());
+
+  try {
+    const response = await fetch(`/api/workflow/raw-videos?${params}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    const items = data.items || [];
+    if (!items.length) {
+      results.innerHTML = '<p class="source-empty">Aucune vidéo brute ne correspond.</p>';
+    } else {
+      results.innerHTML = items
+        .map(
+          (source) => `
+          <button type="button" class="source-result" data-source-id="${escapeAttr(source.file_id)}">
+            ${source.internal_video_id ? `<code class="source-id">${escapeHtml(source.internal_video_id)}</code>` : ""}
+            <span class="source-result-label">${escapeHtml(source.label)}</span>
+            <span class="folder-path">${escapeHtml(source.folder_path || "—")}</span>
+          </button>`
+        )
+        .join("");
+    }
+    results.hidden = false;
+  } catch (error) {
+    results.innerHTML = `<p class="source-empty">Recherche impossible : ${escapeHtml(error.message)}</p>`;
+    results.hidden = false;
+  }
+}
+
+function selectSourceVideo(button) {
+  const hidden = document.getElementById("workflowSourceFile");
+  const selected = document.getElementById("sourceSelected");
+  const results = document.getElementById("sourceSearchResults");
+  const search = document.getElementById("sourceSearchInput");
+  if (!hidden || !selected) return;
+
+  hidden.value = button.dataset.sourceId;
+  selected.innerHTML = renderSelectedSource({
+    internal_video_id: button.querySelector(".source-id")?.textContent || "",
+    label: button.querySelector(".source-result-label")?.textContent || "",
+    folder_path: button.querySelector(".folder-path")?.textContent || "",
+  });
+  if (results) {
+    results.hidden = true;
+    results.innerHTML = "";
+  }
+  if (search) search.value = "";
+  // Le choix n'est pas persisté tant que "Enregistrer le suivi" n'est pas cliqué.
+  const status = document.getElementById("workflowSaveStatus");
+  if (status) status.textContent = "Source sélectionnée — cliquez sur « Enregistrer le suivi » pour valider.";
+}
+
+function clearSourceVideo() {
+  const hidden = document.getElementById("workflowSourceFile");
+  const selected = document.getElementById("sourceSelected");
+  if (hidden) hidden.value = "";
+  if (selected) selected.innerHTML = renderSelectedSource(null);
+  const status = document.getElementById("workflowSaveStatus");
+  if (status) status.textContent = "Source retirée — cliquez sur « Enregistrer le suivi » pour valider.";
+}
+
+// Le rattachement d'une découpe à sa source se fait par recherche : l'ancienne
+// liste déroulante chargeait toute la bibliothèque, ce qui la rendait
+// inutilisable dès quelques centaines de vidéos.
+function renderSelectedSource(source) {
+  if (!source) {
+    return '<p class="source-empty">Aucune source associée. Recherchez la vidéo brute ci-dessus.</p>';
+  }
+  const id = source.internal_video_id
+    ? `<code class="source-id">${escapeHtml(source.internal_video_id)}</code>`
+    : "";
+  const name = escapeHtml(source.editorial_title || source.label || source.file_name || "");
+  const folder = escapeHtml(source.folder_path || "");
+  const remove = appMode.readOnly
+    ? ""
+    : '<button type="button" id="clearSourceButton" class="btn-secondary" title="Retirer la source">Retirer</button>';
+  return `
+    <div class="source-selected">
+      <div class="source-selected-main">${id}<strong>${name}</strong></div>
+      ${folder ? `<div class="folder-path">${folder}</div>` : ""}
+      ${remove}
+    </div>`;
+}
+
 async function renderWorkflowEditor(item) {
-  const response = await fetch(`/api/workflow/raw-videos?exclude_file_id=${encodeURIComponent(item.file_id)}`);
-  const data = await response.json();
-  const sourceOptions = (data.items || [])
-    .map((source) => `
-      <option value="${escapeAttr(source.file_id)}" ${source.file_id === item.source_file_id ? "selected" : ""}>
-        ${escapeHtml(source.label)} · ${escapeHtml(source.folder_path)}
-      </option>`)
-    .join("");
   const related = item.related_videos || {};
   const sourceLink = related.source
     ? `<button class="related-video-btn" type="button" data-related-id="${escapeAttr(related.source.file_id)}">Source : ${escapeHtml(related.source.editorial_title || related.source.file_name)}</button>`
@@ -493,13 +581,15 @@ async function renderWorkflowEditor(item) {
             ${Object.entries(workflowLabels).map(([value, label]) => `<option value="${value}" ${item.workflow_stage === value ? "selected" : ""}>${label}</option>`).join("")}
           </select>
         </label>
-        <label class="metadata-field metadata-field-wide" id="sourceVideoField" ${item.asset_type !== "cut" ? "hidden" : ""}>
-          <span>Vidéo brute source</span>
-          <select id="workflowSourceFile" ${appMode.readOnly ? "disabled" : ""}>
-            <option value="">Aucune source associée</option>
-            ${sourceOptions}
-          </select>
-        </label>
+        <div class="metadata-field metadata-field-wide" id="sourceVideoField" ${item.asset_type !== "cut" ? "hidden" : ""}>
+          <span class="metadata-field-label">Vidéo brute source</span>
+          <input type="hidden" id="workflowSourceFile" value="${escapeAttr(item.source_file_id || "")}">
+          ${appMode.readOnly ? "" : `
+            <input id="sourceSearchInput" type="search" autocomplete="off"
+                   placeholder="Rechercher par ID interne (CHR-VID-000123), titre ou nom de fichier">
+            <div id="sourceSearchResults" class="source-results" hidden></div>`}
+          <div id="sourceSelected">${renderSelectedSource(related.source)}</div>
+        </div>
         <label class="metadata-field metadata-field-wide">
           <span>Notes de suivi</span>
           <textarea id="workflowNotes" rows="3" ${appMode.readOnly ? "disabled" : ""}>${escapeHtml(item.workflow_notes || "")}</textarea>
@@ -835,9 +925,32 @@ els.detailContent.addEventListener("click", (event) => {
     copyInternalId(target);
     return;
   }
+  const sourceResult = target.closest(".source-result");
+  if (sourceResult) {
+    selectSourceVideo(sourceResult);
+    return;
+  }
+  if (target.id === "clearSourceButton") {
+    clearSourceVideo();
+    return;
+  }
   if (target.classList.contains("related-video-btn")) {
     showDetails(target.dataset.relatedId);
   }
+});
+
+// Recherche de source : saisie décalée pour ne pas requêter à chaque frappe.
+els.detailContent.addEventListener("input", (event) => {
+  if (event.target.id !== "sourceSearchInput") return;
+  const term = event.target.value;
+  window.clearTimeout(sourceSearchTimer);
+  sourceSearchTimer = window.setTimeout(() => runSourceSearch(term), 250);
+});
+
+els.detailContent.addEventListener("focusin", (event) => {
+  if (event.target.id !== "sourceSearchInput") return;
+  const results = document.getElementById("sourceSearchResults");
+  if (results && !results.innerHTML) runSourceSearch("");
 });
 
 els.detailContent.addEventListener("change", (event) => {

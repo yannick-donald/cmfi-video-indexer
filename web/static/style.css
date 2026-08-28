@@ -990,3 +990,76 @@ dialog article {
 .copy-id-btn:hover {
   opacity: 1;
 }
+
+.metadata-field-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.source-results {
+  margin-top: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+
+.source-result {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.source-result:last-child {
+  border-bottom: none;
+}
+
+.source-result-label {
+  font-weight: 600;
+}
+
+.source-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  margin-right: 6px;
+}
+
+.source-selected {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+
+.source-selected-main {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.source-selected #clearSourceButton {
+  margin-top: 8px;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.source-empty {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}

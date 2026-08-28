@@ -371,21 +371,72 @@ class VideoRepository:
             "unlinked_cuts": unlinked_cuts,
         }
 
-    def get_raw_video_options(self, exclude_file_id: str = "") -> list[dict[str, str]]:
+    def get_raw_video_options(
+        self,
+        exclude_file_id: str = "",
+        query: str = "",
+        limit: int = 20,
+    ) -> list[dict[str, str]]:
+        """
+        Candidate source videos for a cut, as a ranked and bounded list.
+
+        Returning every raw video was unusable: because new videos default to
+        'raw', that list was effectively the whole library. Callers now search -
+        by internal ID, title, file name or folder - and get the best matches
+        only. An empty query returns the most recently modified videos, which is
+        a far more useful default than the alphabetical head of the library.
+        """
+        term = query.strip()
+        limit = max(1, min(limit, 50))
+        params: dict[str, Any] = {"exclude": exclude_file_id, "limit": limit}
+
+        if term:
+            params["like"] = f"%{term}%"
+            params["exact"] = term
+            where = """
+                AND (
+                    internal_video_id LIKE :like
+                    OR file_name LIKE :like
+                    OR editorial_title LIKE :like
+                    OR clean_title LIKE :like
+                    OR folder_path LIKE :like
+                )
+            """
+            # An exact internal-ID hit is what someone pasting an ID expects to
+            # see first; everything else falls back to alphabetical order.
+            order = """
+                CASE
+                    WHEN internal_video_id = :exact COLLATE NOCASE THEN 0
+                    WHEN internal_video_id LIKE :like THEN 1
+                    WHEN editorial_title LIKE :like THEN 2
+                    WHEN file_name LIKE :like THEN 3
+                    ELSE 4
+                END,
+                COALESCE(NULLIF(editorial_title, ''), file_name) COLLATE NOCASE
+            """
+        else:
+            where = ""
+            order = "modified_at DESC, file_name COLLATE NOCASE"
+
         with self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT file_id, file_name, editorial_title, folder_path
+                f"""
+                SELECT file_id, internal_video_id, file_name, editorial_title,
+                       folder_path, modified_at
                 FROM videos
-                WHERE asset_type = 'raw' AND file_id != ?
-                ORDER BY COALESCE(NULLIF(editorial_title, ''), file_name) COLLATE NOCASE
+                WHERE asset_type = 'raw' AND file_id != :exclude
+                {where}
+                ORDER BY {order}
+                LIMIT :limit
                 """,
-                (exclude_file_id,),
+                params,
             ).fetchall()
         return [
             {
                 "file_id": row["file_id"],
+                "internal_video_id": row["internal_video_id"] or "",
                 "label": row["editorial_title"] or row["file_name"],
+                "file_name": row["file_name"] or "",
                 "folder_path": row["folder_path"] or "",
             }
             for row in rows

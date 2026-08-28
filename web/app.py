@@ -240,8 +240,13 @@ def create_app(settings: Settings) -> FastAPI:
         return {**repo.get_workflow_stats(), "tracking": repo.get_tracking_stats()}
 
     @app.get("/api/workflow/raw-videos")
-    async def raw_video_options(exclude_file_id: str = Query(default="")) -> dict[str, Any]:
-        return {"items": repo.get_raw_video_options(exclude_file_id)}
+    async def raw_video_options(
+        exclude_file_id: str = Query(default=""),
+        q: str = Query(default="", max_length=120),
+        limit: int = Query(default=20, ge=1, le=50),
+    ) -> dict[str, Any]:
+        """Ranked source candidates for a cut. An empty q returns the newest."""
+        return {"items": repo.get_raw_video_options(exclude_file_id, query=q, limit=limit)}
 
     @app.get("/api/scan-folder/status")
     async def scan_folder_status(request: Request) -> dict[str, Any]:
