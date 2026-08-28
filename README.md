@@ -176,6 +176,27 @@ The collaborative dashboard also provides:
 - Excel and CSV exports of the filtered library;
 - automatic linking of a cut video to the raw video it came from.
 
+### Titles
+
+Videos are shown by their editorial title, falling back to the file name. A
+**Proposer un titre** button in the detail panel builds one in the house format:
+
+```
+Sujet | Intervenant — Lieu Année (Partie)
+```
+
+Fields a human has entered always outrank anything guessed from the file name,
+so a video gets a proper title once it has been described, however it was named.
+A cut keeps its own focus as the subject and inherits speaker, place and year
+from its source. Nothing is invented: a machine-generated name yields no title
+at all, and the video keeps an empty one until its metadata is filled.
+
+**Titres manquants** in the toolbar does the same for the whole library. It
+always previews first — how many titles would be written, how many are usable as
+is, how many need review — and writes only on confirmation. Existing titles are
+never overwritten, and generating a title does not mark a video as reviewed, so
+the editorial queues stay meaningful.
+
 ### Linking a cut to its source
 
 Every video carries a stable internal ID (`CHR-VID-000123`), shown in the

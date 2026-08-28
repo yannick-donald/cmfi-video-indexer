@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 import json
 import unicodedata
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from collections.abc import Iterator
 from typing import Any
@@ -490,6 +490,113 @@ class VideoRepository:
                 "session_number": proposal.session_number,
                 "source_medium": proposal.source_medium,
             },
+        }
+
+    def _title_metadata(self, video: VideoRecord) -> dict[str, str]:
+        return {
+            "speaker": video.speaker,
+            "preacher": video.preacher,
+            "location": video.location,
+            "event_date": video.event_date,
+            "content_type": video.content_type,
+            "session_number": video.session_number,
+            "main_theme": video.main_theme,
+        }
+
+    def fill_missing_editorial_titles(
+        self,
+        *,
+        apply: bool = False,
+        include_partial: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Propose a title for every video that has none.
+
+        Never overwrites: a video with an editorial title is left alone, whoever
+        wrote it. With apply=False nothing is written and the caller gets the
+        exact list it would have written, so a mass edit can be reviewed first.
+
+        Raw videos are resolved before cuts, so a cut inherits the title its
+        source is about to receive rather than the one it had a moment ago.
+        """
+        videos = list(self.iter_videos())
+        by_file_id = {video.file_id: video for video in videos}
+        proposals: dict[str, Any] = {}
+
+        for video in videos:
+            if video.asset_type != "cut":
+                proposals[video.file_id] = propose_title(
+                    video.file_name, metadata=self._title_metadata(video)
+                )
+
+        for video in videos:
+            if video.asset_type != "cut":
+                continue
+            source_proposal = None
+            source = by_file_id.get(video.source_file_id) if video.source_file_id else None
+            if source is not None:
+                base = proposals.get(source.file_id) or propose_title(
+                    source.file_name, metadata=self._title_metadata(source)
+                )
+                # Copy before overriding: the source keeps its own proposal.
+                source_proposal = replace(base)
+                if source.editorial_title.strip():
+                    source_proposal.title = source.editorial_title.strip()
+            proposals[video.file_id] = propose_title(
+                video.file_name, metadata=self._title_metadata(video), source=source_proposal
+            )
+
+        selected: list[tuple[VideoRecord, Any]] = []
+        skipped_existing = 0
+        skipped_no_title = 0
+        skipped_partial = 0
+        for video in videos:
+            if video.editorial_title.strip():
+                skipped_existing += 1
+                continue
+            proposal = proposals[video.file_id]
+            if not proposal.title:
+                skipped_no_title += 1
+                continue
+            if proposal.confidence != "high" and not include_partial:
+                skipped_partial += 1
+                continue
+            selected.append((video, proposal))
+
+        if apply and selected:
+            with self._connect() as conn:
+                for video, proposal in selected:
+                    conn.execute(
+                        "UPDATE videos SET editorial_title = ? WHERE file_id = ?",
+                        (proposal.title, video.file_id),
+                    )
+                    # reviewed_at is deliberately untouched: a generated title is
+                    # not a human review, and marking it as one would empty the
+                    # "nouvelles vidéos" queue without anyone having looked.
+                    row = conn.execute(
+                        "SELECT * FROM videos WHERE file_id = ?", (video.file_id,)
+                    ).fetchone()
+                    if row:
+                        self._upsert_fts(conn, VideoRecord.from_row(row).to_dict())
+                conn.commit()
+
+        return {
+            "applied": bool(apply),
+            "eligible": len(selected),
+            "high": sum(1 for _, proposal in selected if proposal.confidence == "high"),
+            "partial": sum(1 for _, proposal in selected if proposal.confidence == "partial"),
+            "skipped_existing_title": skipped_existing,
+            "skipped_no_proposal": skipped_no_title,
+            "skipped_partial_excluded": skipped_partial,
+            "sample": [
+                {
+                    "internal_video_id": video.internal_video_id,
+                    "file_name": video.file_name,
+                    "title": proposal.title,
+                    "confidence": proposal.confidence,
+                }
+                for video, proposal in selected[:15]
+            ],
         }
 
     def get_workflow_stats(self) -> dict[str, Any]:

@@ -1085,3 +1085,23 @@ dialog article {
   gap: 8px;
   flex-wrap: wrap;
 }
+
+.fill-titles-status {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.fill-titles-sample {
+  margin: 8px 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
+.fill-titles-sample li {
+  margin: 2px 0;
+}

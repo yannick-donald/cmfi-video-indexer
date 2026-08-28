@@ -464,6 +464,23 @@ def create_app(settings: Settings) -> FastAPI:
         payload["completeness"] = _video_completeness(payload, payload["labels"])
         return payload
 
+    @app.post("/api/titles/fill")
+    async def fill_titles(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+        """
+        Fill every empty editorial title at once.
+
+        Defaults to a dry run: the caller must pass apply=true explicitly, so a
+        mass edit is always previewed before it is written.
+        """
+        _require_writable(settings)
+        if settings.auth_required and not request.state.user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        return await asyncio.to_thread(
+            repo.fill_missing_editorial_titles,
+            apply=bool(payload.get("apply")),
+            include_partial=payload.get("include_partial", True) is not False,
+        )
+
     @app.get("/api/videos/{file_id}/title-suggestion")
     async def suggest_title(file_id: str) -> dict[str, Any]:
         """Propose a title. Read-only: nothing is saved until the user saves."""

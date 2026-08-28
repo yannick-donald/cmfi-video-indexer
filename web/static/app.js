@@ -89,6 +89,8 @@ const els = {
   searchDriveFoldersButton: document.getElementById("searchDriveFoldersButton"),
   driveFolderSearchResults: document.getElementById("driveFolderSearchResults"),
   labelSuggestions: document.getElementById("labelSuggestions"),
+  fillTitlesButton: document.getElementById("fillTitlesButton"),
+  fillTitlesStatus: document.getElementById("fillTitlesStatus"),
   exportExcelButton: document.getElementById("exportExcelButton"),
   exportCsvButton: document.getElementById("exportCsvButton"),
 };
@@ -279,6 +281,63 @@ async function copyInternalId(button) {
     button.textContent = original;
     button.title = `Copier ${value}`;
   }, 1200);
+}
+
+async function callFillTitles(apply) {
+  const response = await fetch("/api/titles/fill", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ apply, include_partial: true }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || `HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+// Écriture de masse : toujours un aperçu d'abord, jamais d'application directe.
+async function previewFillTitles() {
+  els.fillTitlesButton.disabled = true;
+  els.fillTitlesStatus.hidden = false;
+  els.fillTitlesStatus.textContent = "Analyse des vidéos sans titre...";
+  try {
+    const data = await callFillTitles(false);
+    if (!data.eligible) {
+      els.fillTitlesStatus.textContent =
+        `Aucun titre à proposer. ${data.skipped_existing_title} vidéo(s) ont déjà un titre, ` +
+        `${data.skipped_no_proposal} n'ont aucun titre déductible de leur nom de fichier.`;
+      return;
+    }
+    const apercu = (data.sample || [])
+      .slice(0, 4)
+      .map((item) => `<li>${escapeHtml(item.title)}</li>`)
+      .join("");
+    els.fillTitlesStatus.innerHTML =
+      `<strong>${data.eligible} titre(s)</strong> seront écrits ` +
+      `(${data.high} exploitables, ${data.partial} à relire). ` +
+      `${data.skipped_existing_title} titre(s) existants ne seront pas touchés, ` +
+      `${data.skipped_no_proposal} vidéo(s) resteront sans titre en attendant leurs métadonnées.` +
+      `<ul class="fill-titles-sample">${apercu}</ul>` +
+      `<button type="button" id="confirmFillTitles">Écrire les ${data.eligible} titres</button> ` +
+      `<button type="button" id="cancelFillTitles" class="btn-secondary">Annuler</button>`;
+  } catch (error) {
+    els.fillTitlesStatus.textContent = `Analyse impossible : ${error.message}`;
+  } finally {
+    els.fillTitlesButton.disabled = false;
+  }
+}
+
+async function applyFillTitles() {
+  els.fillTitlesStatus.textContent = "Écriture en cours...";
+  try {
+    const data = await callFillTitles(true);
+    els.fillTitlesStatus.textContent =
+      `${data.eligible} titre(s) écrits. Les titres marqués « à relire » demandent une vérification.`;
+    await Promise.all([loadVideos(), loadStats()]);
+  } catch (error) {
+    els.fillTitlesStatus.textContent = `Écriture impossible : ${error.message}`;
+  }
 }
 
 function renderRows(items) {
@@ -919,6 +978,16 @@ els.trackingFilter.addEventListener("change", () => {
 });
 
 els.resetFilters.addEventListener("click", resetFilters);
+if (els.fillTitlesButton) {
+  els.fillTitlesButton.addEventListener("click", previewFillTitles);
+  els.fillTitlesStatus.addEventListener("click", (event) => {
+    if (event.target.id === "confirmFillTitles") applyFillTitles();
+    if (event.target.id === "cancelFillTitles") {
+      els.fillTitlesStatus.hidden = true;
+      els.fillTitlesStatus.innerHTML = "";
+    }
+  });
+}
 els.exportExcelButton.addEventListener("click", () =>
   downloadExport(els.exportExcelButton, "/api/export/inventory.xlsx", "inventaire.xlsx")
 );

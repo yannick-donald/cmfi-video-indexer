@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ app_name }} — Video Library</title>
-  <link rel="stylesheet" href="/static/style.css?v=titles-1">
+  <link rel="stylesheet" href="/static/style.css?v=titles-2">
 </head>
 <body
   data-public-demo="{{ 'true' if public_demo else 'false' }}"
@@ -126,6 +126,7 @@
           <option value="desc">Descending</option>
         </select>
         <button id="resetFilters" type="button" class="btn-secondary">Reset</button>
+        <button id="fillTitlesButton" type="button" class="btn-secondary" title="Propose un titre pour toutes les vidéos qui n'en ont pas. Aperçu avant écriture, les titres existants ne sont jamais touchés.">Titres manquants</button>
         <button id="exportExcelButton" type="button" class="btn-secondary" title="Rapport Excel complet : inventaire filtré, statistiques, doublons, arborescence et erreurs">Exporter Excel</button>
         <button id="exportCsvButton" type="button" class="btn-secondary" title="Liste CSV des vidéos correspondant aux filtres actifs">Exporter CSV</button>
         <label class="semantic-toggle">
@@ -134,6 +135,8 @@
         </label>
       </div>
     </section>
+
+    <p id="fillTitlesStatus" class="fill-titles-status" hidden></p>
 
     <div class="layout">
       <aside class="filters">
@@ -367,6 +370,6 @@
   {% endif %}
 
   <datalist id="labelSuggestions"></datalist>
-  <script src="/static/app.js?v=titles-1"></script>
+  <script src="/static/app.js?v=titles-2"></script>
 </body>
 </html>
