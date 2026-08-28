@@ -207,6 +207,14 @@ To attach a cut to its source, open the video, set **Type de fichier** to
 *Vidéo découpée*, then search the source by internal ID, title, file name or
 folder. Pasting an ID puts the exact match first.
 
+**File à rattacher** lists every cut still missing a source, each with its most
+plausible candidates and the reasons they were picked - words shared with the
+cut's name, same folder, same speaker, same event, same year. One click links
+it. Duration would be the strongest signal, since a cut is always shorter than
+its source, but ffprobe is disabled in the hosted deployment so no durations are
+stored; enable it to sharpen the ranking. When nothing plausible is found the
+queue says so rather than proposing a weak guess.
+
 An editor working outside the app can skip that step entirely: naming the cut
 `CHR-VID-000123 - Extrait.mp4` in Drive is enough, and the next scan attaches it
 on its own. The pass only ever fills a blank - it never overwrites an existing

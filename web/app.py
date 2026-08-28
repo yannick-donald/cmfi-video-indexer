@@ -248,6 +248,37 @@ def create_app(settings: Settings) -> FastAPI:
         """Ranked source candidates for a cut. An empty q returns the newest."""
         return {"items": repo.get_raw_video_options(exclude_file_id, query=q, limit=limit)}
 
+    @app.get("/api/workflow/relink-queue")
+    async def relink_queue(
+        limit: int = Query(default=25, ge=1, le=100),
+        suggestions: int = Query(default=3, ge=1, le=5),
+    ) -> dict[str, Any]:
+        """Cut videos with no source yet, each with its best candidate sources."""
+        def build() -> list[dict[str, Any]]:
+            return [
+                {**cut, "suggestions": repo.suggest_sources_for(cut["file_id"], suggestions)}
+                for cut in repo.get_unlinked_cuts(limit)
+            ]
+
+        items = await asyncio.to_thread(build)
+        return {"items": items, "total": len(items)}
+
+    @app.post("/api/videos/{file_id}/link-source")
+    async def link_source(request: Request, file_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        _require_writable(settings)
+        if settings.auth_required and not request.state.user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        source_file_id = str(payload.get("source_file_id") or "").strip()
+        if not source_file_id:
+            raise HTTPException(status_code=400, detail="source_file_id is required")
+        try:
+            video = repo.link_cut_source(file_id, source_file_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not video:
+            raise HTTPException(status_code=404, detail="Video not found")
+        return {"file_id": file_id, "source_file_id": video.source_file_id, "asset_type": video.asset_type}
+
     @app.get("/api/scan-folder/status")
     async def scan_folder_status(request: Request) -> dict[str, Any]:
         _require_drive_scan(repo, settings, request.state.user)

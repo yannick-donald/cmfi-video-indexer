@@ -1105,3 +1105,56 @@ dialog article {
 .fill-titles-sample li {
   margin: 2px 0;
 }
+
+.tracking-card-action strong {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.relink-item {
+  display: grid;
+  gap: 10px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.relink-item:last-child {
+  border-bottom: none;
+}
+
+.relink-cut {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.relink-options {
+  display: grid;
+  gap: 6px;
+}
+
+.relink-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  cursor: pointer;
+}
+
+.relink-option-main {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.relink-done {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}

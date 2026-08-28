@@ -11,6 +11,7 @@ from typing import Any
 from database.models import VideoRecord
 from database.schema import init_database
 from metadata_cleaning.youtube_title import propose_title
+from reporting.duplicates import normalize_for_comparison
 from utils.internal_ids import extract_internal_id
 
 SORT_COLUMNS = {
@@ -598,6 +599,139 @@ class VideoRepository:
                 for video, proposal in selected[:15]
             ],
         }
+
+    def get_unlinked_cuts(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Cut videos still waiting to be attached to the raw video they came from."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT file_id, internal_video_id, file_name, editorial_title,
+                       folder_path, parent_folder, speaker, preacher, event_name,
+                       location, event_date, modified_at, created_at
+                FROM videos
+                WHERE asset_type = 'cut' AND COALESCE(source_file_id, '') = ''
+                ORDER BY COALESCE(NULLIF(first_seen_at, ''), modified_at) DESC,
+                         file_name COLLATE NOCASE
+                LIMIT ?
+                """,
+                (max(1, min(limit, 200)),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def suggest_sources_for(self, file_id: str, limit: int = 3) -> list[dict[str, Any]]:
+        """
+        Rank the raw videos this cut most plausibly came from.
+
+        Scored on what this library actually knows. Duration would be the
+        strongest signal - a cut is always shorter than its source - but ffprobe
+        is disabled in the hosted deployment, so durations are absent and the
+        ranking leans on names, folders and shared context instead. Every
+        candidate carries the reasons it was picked, so a human can judge rather
+        than trust a bare number.
+        """
+        cut = self.get_video(file_id)
+        if not cut:
+            return []
+
+        cut_tokens = set(normalize_for_comparison(cut.file_name).split())
+        cut_title_tokens = set(normalize_for_comparison(cut.editorial_title).split())
+        cut_year = (cut.event_date or cut.modified_at or "")[:4]
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT file_id, internal_video_id, file_name, editorial_title,
+                       folder_path, parent_folder, speaker, preacher, event_name,
+                       location, event_date, modified_at, file_size, duration_seconds
+                FROM videos
+                WHERE asset_type = 'raw' AND file_id != ?
+                """,
+                (file_id,),
+            ).fetchall()
+
+        scored: list[tuple[float, list[str], dict[str, Any]]] = []
+        for row in rows:
+            score = 0.0
+            reasons: list[str] = []
+
+            source_tokens = set(normalize_for_comparison(row["file_name"]).split())
+            shared = (cut_tokens | cut_title_tokens) & source_tokens
+            if shared and source_tokens:
+                overlap = len(shared) / len(cut_tokens | source_tokens)
+                if overlap > 0.15:
+                    score += overlap * 5
+                    reasons.append(f"mots communs : {', '.join(sorted(shared)[:4])}")
+
+            if cut.folder_path and row["folder_path"] == cut.folder_path:
+                score += 2
+                reasons.append("même dossier")
+            elif cut.parent_folder and row["parent_folder"] == cut.parent_folder:
+                score += 1
+                reasons.append("même dossier parent")
+
+            for field, label in (("speaker", "intervenant"), ("preacher", "prédicateur"),
+                                 ("event_name", "événement"), ("location", "lieu")):
+                mine = (getattr(cut, field) or "").strip().casefold()
+                theirs = (row[field] or "").strip().casefold()
+                if mine and mine == theirs:
+                    score += 1.5
+                    reasons.append(f"même {label}")
+
+            source_year = (row["event_date"] or row["modified_at"] or "")[:4]
+            if cut_year and source_year and cut_year == source_year:
+                score += 0.5
+                reasons.append(f"même année ({cut_year})")
+
+            # A source must predate its cut; treat the reverse as a warning
+            # rather than a veto, since Drive timestamps are only a proxy.
+            if cut.modified_at and row["modified_at"] and row["modified_at"] > cut.modified_at:
+                score -= 0.5
+
+            if cut.duration_seconds and row["duration_seconds"]:
+                if row["duration_seconds"] > cut.duration_seconds:
+                    score += 1.5
+                    reasons.append("source plus longue")
+                else:
+                    score -= 2
+
+            if score > 0.5 and reasons:
+                scored.append((score, reasons, dict(row)))
+
+        scored.sort(key=lambda item: -item[0])
+        return [
+            {
+                "file_id": row["file_id"],
+                "internal_video_id": row["internal_video_id"] or "",
+                "label": row["editorial_title"] or row["file_name"],
+                "file_name": row["file_name"],
+                "folder_path": row["folder_path"] or "",
+                "score": round(score, 2),
+                "reasons": reasons[:4],
+            }
+            for score, reasons, row in scored[: max(1, min(limit, 10))]
+        ]
+
+    def link_cut_source(self, file_id: str, source_file_id: str) -> VideoRecord | None:
+        """
+        Attach a cut to its source, keeping its current production stage.
+
+        Routed through update_workflow so the same rules apply as a manual edit:
+        the source must be an existing raw video, and a video cannot be its own
+        source. It also stamps workflow_updated_at, which marks the choice as
+        human and puts the video out of reach of the automatic linker.
+        """
+        video = self.get_video(file_id)
+        if not video:
+            return None
+        return self.update_workflow(
+            file_id,
+            {
+                "asset_type": "cut",
+                "workflow_stage": video.workflow_stage,
+                "source_file_id": source_file_id,
+                "workflow_notes": video.workflow_notes,
+            },
+        )
 
     def get_workflow_stats(self) -> dict[str, Any]:
         with self._connect() as conn:

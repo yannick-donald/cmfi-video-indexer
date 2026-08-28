@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ app_name }} — Video Library</title>
-  <link rel="stylesheet" href="/static/style.css?v=titles-2">
+  <link rel="stylesheet" href="/static/style.css?v=relink-1">
 </head>
 <body
   data-public-demo="{{ 'true' if public_demo else 'false' }}"
@@ -99,6 +99,9 @@
         </button>
         <button class="tracking-card" type="button" data-tracking="unlinked_cut">
           <span>Découpées sans source</span><strong id="trackingUnlinkedCuts">—</strong>
+        </button>
+        <button class="tracking-card tracking-card-action" type="button" id="openRelinkQueue">
+          <span>File à rattacher</span><strong>Ouvrir</strong>
         </button>
       </div>
     </section>
@@ -292,6 +295,19 @@
     </form>
   </dialog>
 
+  <dialog id="relinkDialog" class="wide-dialog">
+    <form method="dialog">
+      <article>
+        <h2>File à rattacher</h2>
+        <p class="metadata-hint">Vidéos découpées sans source. Choisissez la vidéo brute dont elles proviennent : le rattachement est immédiat.</p>
+        <div id="relinkContent"></div>
+      </article>
+      <menu>
+        <button value="cancel" class="btn-secondary">Fermer</button>
+      </menu>
+    </form>
+  </dialog>
+
   <dialog id="helpDialog" class="wide-dialog">
     <form method="dialog">
       <article>
@@ -370,6 +386,6 @@
   {% endif %}
 
   <datalist id="labelSuggestions"></datalist>
-  <script src="/static/app.js?v=titles-2"></script>
+  <script src="/static/app.js?v=relink-1"></script>
 </body>
 </html>

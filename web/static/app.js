@@ -89,6 +89,9 @@ const els = {
   searchDriveFoldersButton: document.getElementById("searchDriveFoldersButton"),
   driveFolderSearchResults: document.getElementById("driveFolderSearchResults"),
   labelSuggestions: document.getElementById("labelSuggestions"),
+  openRelinkQueue: document.getElementById("openRelinkQueue"),
+  relinkDialog: document.getElementById("relinkDialog"),
+  relinkContent: document.getElementById("relinkContent"),
   fillTitlesButton: document.getElementById("fillTitlesButton"),
   fillTitlesStatus: document.getElementById("fillTitlesStatus"),
   exportExcelButton: document.getElementById("exportExcelButton"),
@@ -337,6 +340,80 @@ async function applyFillTitles() {
     await Promise.all([loadVideos(), loadStats()]);
   } catch (error) {
     els.fillTitlesStatus.textContent = `Écriture impossible : ${error.message}`;
+  }
+}
+
+function renderRelinkItem(item) {
+  const suggestions = item.suggestions || [];
+  const options = suggestions.length
+    ? suggestions
+        .map(
+          (source) => `
+          <button type="button" class="relink-option" data-cut-id="${escapeAttr(item.file_id)}" data-source-id="${escapeAttr(source.file_id)}">
+            <span class="relink-option-main">
+              ${source.internal_video_id ? `<code class="source-id">${escapeHtml(source.internal_video_id)}</code>` : ""}
+              ${escapeHtml(source.label)}
+            </span>
+            <span class="folder-path">${escapeHtml(source.reasons.join(" · "))}</span>
+          </button>`
+        )
+        .join("")
+    : `<p class="source-empty">Aucune source plausible trouvée. Ouvrez la fiche pour la rechercher manuellement.</p>`;
+
+  return `
+    <section class="relink-item" data-cut-row="${escapeAttr(item.file_id)}">
+      <div class="relink-cut">
+        ${item.internal_video_id ? `<code class="source-id">${escapeHtml(item.internal_video_id)}</code>` : ""}
+        <strong>${escapeHtml(item.editorial_title || item.file_name)}</strong>
+        <div class="folder-path">${escapeHtml(item.folder_path || "—")}</div>
+      </div>
+      <div class="relink-options">${options}</div>
+    </section>`;
+}
+
+async function loadRelinkQueue() {
+  els.relinkContent.innerHTML = '<p class="source-empty">Chargement...</p>';
+  try {
+    const response = await fetch("/api/workflow/relink-queue?limit=25");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (!data.total) {
+      els.relinkContent.innerHTML =
+        `<p class="source-empty">Aucune vidéo à rattacher : toutes les vidéos découpées ont une source.</p>`;
+      return;
+    }
+    els.relinkContent.innerHTML = data.items.map(renderRelinkItem).join("");
+  } catch (error) {
+    els.relinkContent.innerHTML = `<p class="source-empty">Chargement impossible : ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function confirmRelink(button) {
+  const cutId = button.dataset.cutId;
+  const row = els.relinkContent.querySelector(`[data-cut-row="${CSS.escape(cutId)}"]`);
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/videos/${encodeURIComponent(cutId)}/link-source`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_file_id: button.dataset.sourceId }),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.detail || `HTTP ${response.status}`);
+    }
+    if (row) {
+      row.innerHTML = `<p class="relink-done">Rattachée.</p>`;
+    }
+    await Promise.all([loadWorkflowStats(), loadVideos()]);
+  } catch (error) {
+    button.disabled = false;
+    if (row) {
+      const status = document.createElement("p");
+      status.className = "source-empty";
+      status.textContent = `Rattachement impossible : ${error.message}`;
+      row.appendChild(status);
+    }
   }
 }
 
@@ -978,6 +1055,19 @@ els.trackingFilter.addEventListener("change", () => {
 });
 
 els.resetFilters.addEventListener("click", resetFilters);
+if (els.openRelinkQueue) {
+  els.openRelinkQueue.addEventListener("click", () => {
+    els.relinkDialog.showModal();
+    loadRelinkQueue();
+  });
+  els.relinkContent.addEventListener("click", (event) => {
+    const option = event.target.closest(".relink-option");
+    if (option) {
+      event.preventDefault();
+      confirmRelink(option);
+    }
+  });
+}
 if (els.fillTitlesButton) {
   els.fillTitlesButton.addEventListener("click", previewFillTitles);
   els.fillTitlesStatus.addEventListener("click", (event) => {
