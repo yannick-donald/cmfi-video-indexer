@@ -136,6 +136,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
         ("source_file_id", "TEXT"),
         ("workflow_notes", "TEXT"),
         ("workflow_updated_at", "TEXT"),
+        ("assigned_user_id", "INTEGER"),
+        ("assigned_user_email", "TEXT"),
+        ("assigned_at", "TEXT"),
+        ("assigned_by_email", "TEXT"),
     ]:
         _add_column_if_missing(conn, "videos", col, sql_type)
 
@@ -168,6 +172,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_asset_type ON videos(asset_type)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_workflow_stage ON videos(workflow_stage)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_source_file_id ON videos(source_file_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_assigned_user_id ON videos(assigned_user_id)")
     conn.execute("UPDATE videos SET asset_type = 'raw' WHERE asset_type IS NULL OR asset_type = ''")
     conn.execute(
         "UPDATE videos SET workflow_stage = 'digitized' "

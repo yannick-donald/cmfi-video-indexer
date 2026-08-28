@@ -176,6 +176,21 @@ The collaborative dashboard also provides:
 - Excel and CSV exports of the filtered library;
 - automatic linking of a cut video to the raw video it came from.
 
+### Team and assignment
+
+Only the account matching `ADMIN_EMAIL` administers the team. **Gérer l'équipe**
+lists every account with how many videos it is responsible for, whether its
+e-mail is confirmed and when it last signed in, and enables or disables it.
+Disabling drops that account's sessions at once, so an open browser stops
+working immediately rather than at cookie expiry. The administrator account
+cannot disable itself.
+
+The administrator designates who works on a video from its detail panel, under
+**Responsable**. Everyone can see who is responsible and filter by **Affectée
+à** — including *Non affectées* — but only the administrator can change it. A
+disabled account cannot receive new videos. The assignment survives rescans and
+appears in both exports.
+
 ### Titles
 
 Videos are shown by their editorial title, falling back to the file name. A

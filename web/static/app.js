@@ -89,6 +89,10 @@ const els = {
   searchDriveFoldersButton: document.getElementById("searchDriveFoldersButton"),
   driveFolderSearchResults: document.getElementById("driveFolderSearchResults"),
   labelSuggestions: document.getElementById("labelSuggestions"),
+  assigneeFilter: document.getElementById("assigneeFilter"),
+  openUsersButton: document.getElementById("openUsersButton"),
+  usersDialog: document.getElementById("usersDialog"),
+  usersContent: document.getElementById("usersContent"),
   openRelinkQueue: document.getElementById("openRelinkQueue"),
   relinkDialog: document.getElementById("relinkDialog"),
   relinkContent: document.getElementById("relinkContent"),
@@ -118,6 +122,7 @@ function buildQueryParams() {
   add("workflow_stage", els.workflowStageFilter.value);
   add("label", els.labelFilter.value);
   add("tracking", els.trackingFilter.value);
+  add("assignee", els.assigneeFilter ? els.assigneeFilter.value : "");
   add("min_size_mb", els.minSizeFilter.value);
   add("max_size_mb", els.maxSizeFilter.value);
   add("min_duration_sec", els.minDurationFilter.value);
@@ -207,6 +212,17 @@ async function loadWorkflowStats() {
   els.trackingIncomplete.textContent = (tracking.incomplete || 0).toLocaleString();
   els.trackingMissingLabels.textContent = (tracking.missing_labels || 0).toLocaleString();
   els.trackingUnlinkedCuts.textContent = (tracking.unlinked_cuts || 0).toLocaleString();
+}
+
+async function populateAssigneeFilter() {
+  if (!els.assigneeFilter) return;
+  const team = await loadTeam();
+  if (!team.length) return;
+  const current = els.assigneeFilter.value;
+  els.assigneeFilter.innerHTML =
+    `<option value="">Tout le monde</option><option value="__none__">Non affectées</option>` +
+    team.map((user) => `<option value="${escapeAttr(user.email)}">${escapeHtml(user.email)}</option>`).join("");
+  els.assigneeFilter.value = current;
 }
 
 async function loadFilters() {
@@ -343,6 +359,138 @@ async function applyFillTitles() {
   }
 }
 
+// Liste des comptes, chargée une fois : elle sert au sélecteur d'affectation.
+let teamCache = null;
+
+async function loadTeam(force = false) {
+  if (teamCache && !force) return teamCache;
+  if (!appMode.superAdmin) return [];
+  try {
+    const response = await fetch("/api/admin/users");
+    if (!response.ok) return [];
+    const data = await response.json();
+    teamCache = data.items || [];
+    return teamCache;
+  } catch (error) {
+    return [];
+  }
+}
+
+function renderAssignee(item, team) {
+  const current = item.assigned_user_email || "";
+  const meta = current
+    ? `<div class="folder-path">Désignée le ${escapeHtml(formatDate(item.assigned_at))} par ${escapeHtml(item.assigned_by_email || "—")}</div>`
+    : "";
+  if (!appMode.superAdmin) {
+    return `
+      <section class="assignee-block">
+        <h3>Responsable</h3>
+        <p class="assignee-current">${current ? escapeHtml(current) : "Personne n'est encore désigné."}</p>
+        ${meta}
+      </section>`;
+  }
+  const options = [`<option value="">Personne</option>`]
+    .concat(
+      team
+        .filter((user) => user.is_active || user.email === current)
+        .map(
+          (user) =>
+            `<option value="${escapeAttr(user.id)}" ${user.email === current ? "selected" : ""}>${escapeHtml(user.email)}${user.is_active ? "" : " (désactivé)"}</option>`
+        )
+    )
+    .join("");
+  return `
+    <section class="assignee-block">
+      <h3>Responsable</h3>
+      <div class="assignee-row">
+        <select id="assigneeSelect" ${appMode.readOnly ? "disabled" : ""}>${options}</select>
+        ${appMode.readOnly ? "" : '<button type="button" id="saveAssigneeButton">Désigner</button>'}
+      </div>
+      ${meta}
+      <p id="assigneeStatus" class="filters-status"></p>
+    </section>`;
+}
+
+async function saveAssignee() {
+  const select = document.getElementById("assigneeSelect");
+  const status = document.getElementById("assigneeStatus");
+  const fileId = els.detailContent.dataset.fileId;
+  if (!select || !fileId) return;
+  status.textContent = "Enregistrement...";
+  try {
+    const response = await fetch(`/api/videos/${encodeURIComponent(fileId)}/assignee`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: select.value ? Number(select.value) : null }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    status.textContent = data.assigned_user_email
+      ? `Vidéo désignée à ${data.assigned_user_email}.`
+      : "Affectation retirée.";
+    await loadVideos();
+  } catch (error) {
+    status.textContent = `Échec : ${error.message}`;
+  }
+}
+
+async function loadUsersPanel() {
+  els.usersContent.innerHTML = '<p class="source-empty">Chargement...</p>';
+  try {
+    const response = await fetch("/api/admin/users");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    teamCache = data.items || [];
+    const charge = {};
+    (data.assignments?.per_user || []).forEach((row) => {
+      charge[row.email] = row.total;
+    });
+    const rows = teamCache
+      .map(
+        (user) => `
+        <tr>
+          <td>${escapeHtml(user.email)}${user.is_super_admin ? ' <span class="new-badge">admin</span>' : ""}</td>
+          <td>${charge[user.email] || 0}</td>
+          <td>${user.email_verified ? "oui" : "non"}</td>
+          <td>${user.last_login_at ? escapeHtml(formatDate(user.last_login_at)) : "jamais"}</td>
+          <td>${
+            user.is_super_admin
+              ? "—"
+              : `<button type="button" class="toggle-user-btn btn-secondary" data-user-id="${escapeAttr(user.id)}" data-active="${user.is_active}">${user.is_active ? "Désactiver" : "Réactiver"}</button>`
+          }</td>
+        </tr>`
+      )
+      .join("");
+    els.usersContent.innerHTML = `
+      <table class="users-table">
+        <thead><tr><th>Compte</th><th>Vidéos</th><th>Vérifié</th><th>Dernière connexion</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <p class="metadata-hint">${data.assignments?.unassigned ?? 0} vidéo(s) sans responsable désigné.</p>
+      <p id="usersStatus" class="filters-status"></p>`;
+  } catch (error) {
+    els.usersContent.innerHTML = `<p class="source-empty">Chargement impossible : ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function toggleUser(button) {
+  const status = document.getElementById("usersStatus");
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/admin/users/${button.dataset.userId}/status`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_active: button.dataset.active !== "true" }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    await loadUsersPanel();
+  } catch (error) {
+    button.disabled = false;
+    if (status) status.textContent = `Échec : ${error.message}`;
+  }
+}
+
 function renderRelinkItem(item) {
   const suggestions = item.suggestions || [];
   const options = suggestions.length
@@ -436,6 +584,7 @@ function renderRows(items) {
           </div>
           ${item.editorial_title || item.clean_title ? `<div class="folder-path">${escapeHtml(item.file_name)}</div>` : ""}
           <div class="folder-path">${escapeHtml(item.owner || "Unknown owner")}</div>
+          ${item.assigned_user_email ? `<div class="assignee-badge" title="Désignée pour travailler dessus">👤 ${escapeHtml(item.assigned_user_email)}</div>` : ""}
           ${renderLabelBadges(item.labels || [])}
           ${item.last_label_edit ? `<div class="label-edit-by">Labels : ${escapeHtml(item.last_label_edit.user_email)} · ${escapeHtml(formatDate(item.last_label_edit.created_at))}</div>` : ""}
         </td>
@@ -506,7 +655,11 @@ async function showDetails(fileId) {
         <div>${typeof value === "string" && (value.startsWith("<a") || value.startsWith("<span class=\"internal-id")) ? value : escapeHtml(String(value))}</div>
       </div>`
     )
-    .join("") + renderLabelEditor(item) + await renderWorkflowEditor(item) + renderChristianMetadataEditor(item);
+    .join("") +
+    renderAssignee(item, await loadTeam()) +
+    renderLabelEditor(item) +
+    (await renderWorkflowEditor(item)) +
+    renderChristianMetadataEditor(item);
 
   els.detailDialog.showModal();
 }
@@ -958,7 +1111,8 @@ function resetFilters() {
     els.workflowStageFilter,
     els.labelFilter,
     els.trackingFilter,
-  ].forEach((select) => {
+    els.assigneeFilter,
+  ].filter(Boolean).forEach((select) => {
     select.value = "";
   });
   [els.minSizeFilter, els.maxSizeFilter, els.minDurationFilter, els.maxDurationFilter].forEach((input) => {
@@ -1055,6 +1209,25 @@ els.trackingFilter.addEventListener("change", () => {
 });
 
 els.resetFilters.addEventListener("click", resetFilters);
+if (els.openUsersButton) {
+  els.openUsersButton.addEventListener("click", () => {
+    els.usersDialog.showModal();
+    loadUsersPanel();
+  });
+  els.usersContent.addEventListener("click", (event) => {
+    const button = event.target.closest(".toggle-user-btn");
+    if (button) {
+      event.preventDefault();
+      toggleUser(button);
+    }
+  });
+}
+if (els.assigneeFilter) {
+  els.assigneeFilter.addEventListener("change", () => {
+    state.page = 1;
+    loadVideos();
+  });
+}
 if (els.openRelinkQueue) {
   els.openRelinkQueue.addEventListener("click", () => {
     els.relinkDialog.showModal();
@@ -1110,6 +1283,10 @@ els.resultsBody.addEventListener("click", (event) => {
 els.detailContent.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
+  if (target.id === "saveAssigneeButton") {
+    saveAssignee();
+    return;
+  }
   if (target.id === "suggestTitleButton") {
     suggestTitle();
     return;
@@ -1345,7 +1522,13 @@ if (appMode.superAdmin && els.openDriveConfigButton) {
 }
 
 async function init() {
-  await Promise.all([loadStats(), loadWorkflowStats(), loadFilters(), loadVideos()]);
+  await Promise.all([
+    loadStats(),
+    loadWorkflowStats(),
+    loadFilters(),
+    loadVideos(),
+    populateAssigneeFilter(),
+  ]);
 }
 
 init();

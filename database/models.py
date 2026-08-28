@@ -57,6 +57,10 @@ class VideoRecord:
     source_file_id: str = ""
     workflow_notes: str = ""
     workflow_updated_at: str = ""
+    assigned_user_id: int | None = None
+    assigned_user_email: str = ""
+    assigned_at: str = ""
+    assigned_by_email: str = ""
     first_seen_at: str = ""
     reviewed_at: str = ""
     duration_seconds: float | None = None
@@ -130,6 +134,10 @@ class VideoRecord:
             source_file_id=row["source_file_id"] or "",
             workflow_notes=row["workflow_notes"] or "",
             workflow_updated_at=row["workflow_updated_at"] or "",
+            assigned_user_id=row["assigned_user_id"],
+            assigned_user_email=row["assigned_user_email"] or "",
+            assigned_at=row["assigned_at"] or "",
+            assigned_by_email=row["assigned_by_email"] or "",
             first_seen_at=row["first_seen_at"] or "",
             reviewed_at=row["reviewed_at"] or "",
             duration_seconds=row["duration_seconds"],
@@ -203,6 +211,10 @@ class VideoRecord:
             "source_file_id": self.source_file_id,
             "workflow_notes": self.workflow_notes,
             "workflow_updated_at": self.workflow_updated_at,
+            "assigned_user_id": self.assigned_user_id,
+            "assigned_user_email": self.assigned_user_email,
+            "assigned_at": self.assigned_at,
+            "assigned_by_email": self.assigned_by_email,
             "first_seen_at": self.first_seen_at,
             "reviewed_at": self.reviewed_at,
             "duration_seconds": self.duration_seconds,

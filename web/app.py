@@ -237,7 +237,11 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.get("/api/workflow/stats")
     async def workflow_stats() -> dict[str, Any]:
-        return {**repo.get_workflow_stats(), "tracking": repo.get_tracking_stats()}
+        return {
+            **repo.get_workflow_stats(),
+            "tracking": repo.get_tracking_stats(),
+            "assignments": repo.get_assignment_stats(),
+        }
 
     @app.get("/api/workflow/raw-videos")
     async def raw_video_options(
@@ -322,6 +326,67 @@ def create_app(settings: Settings) -> FastAPI:
         background_tasks.add(task)
         task.add_done_callback(background_tasks.discard)
         return JSONResponse(dict(scan_state), status_code=202)
+
+    @app.get("/api/admin/users")
+    async def list_users(request: Request) -> dict[str, Any]:
+        _require_super_admin(settings, request.state.user)
+        users = auth_repo.list_users()
+        for user in users:
+            user["is_super_admin"] = _is_super_admin(settings, str(user["email"]))
+        return {"items": users, "assignments": repo.get_assignment_stats()}
+
+    @app.put("/api/admin/users/{user_id}/status")
+    async def set_user_status(request: Request, user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        admin = _require_super_admin(settings, request.state.user)
+        _require_writable(settings)
+        target = auth_repo.get_user(user_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="Compte introuvable")
+        if _is_super_admin(settings, str(target["email"])):
+            raise HTTPException(
+                status_code=400,
+                detail="Le compte administrateur ne peut pas être désactivé",
+            )
+        if int(admin["id"]) == user_id:
+            raise HTTPException(status_code=400, detail="Vous ne pouvez pas désactiver votre propre compte")
+        updated = auth_repo.set_user_active(user_id, bool(payload.get("is_active")))
+        if not updated:
+            raise HTTPException(status_code=404, detail="Compte introuvable")
+        return updated
+
+    @app.put("/api/videos/{file_id}/assignee")
+    async def assign_video(request: Request, file_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Designate who works on a video. Reserved to the administrator."""
+        admin = _require_super_admin(settings, request.state.user)
+        _require_writable(settings)
+        raw_user_id = payload.get("user_id")
+        if raw_user_id in (None, "", 0):
+            video = repo.assign_video(file_id, None, "", assigned_by_email=str(admin["email"]))
+        else:
+            try:
+                user_id = int(raw_user_id)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail="user_id invalide") from exc
+            target = auth_repo.get_user(user_id)
+            if not target:
+                raise HTTPException(status_code=404, detail="Compte introuvable")
+            if not target["is_active"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Ce compte est désactivé : réactivez-le avant de lui affecter une vidéo",
+                )
+            video = repo.assign_video(
+                file_id, user_id, str(target["email"]), assigned_by_email=str(admin["email"])
+            )
+        if not video:
+            raise HTTPException(status_code=404, detail="Video not found")
+        return {
+            "file_id": file_id,
+            "assigned_user_id": video.assigned_user_id,
+            "assigned_user_email": video.assigned_user_email,
+            "assigned_at": video.assigned_at,
+            "assigned_by_email": video.assigned_by_email,
+        }
 
     @app.get("/api/admin/drive-folder")
     async def drive_folder_config(request: Request) -> dict[str, Any]:
@@ -411,6 +476,7 @@ def create_app(settings: Settings) -> FastAPI:
         workflow_stage: str = Query(default=""),
         label: str = Query(default=""),
         tracking: str = Query(default=""),
+        assignee: str = Query(default=""),
         sort_by: str = Query(default="file_name"),
         sort_dir: str = Query(default="asc"),
         page: int = Query(default=1, ge=1),
@@ -442,7 +508,7 @@ def create_app(settings: Settings) -> FastAPI:
                 shared_drive=shared_drive, min_size_mb=min_size_mb, max_size_mb=max_size_mb,
                 min_duration_sec=min_duration_sec, max_duration_sec=max_duration_sec,
                 has_audio=has_audio, asset_type=asset_type, workflow_stage=workflow_stage,
-                label=label, tracking=tracking,
+                label=label, tracking=tracking, assignee=assignee,
             ),
             sort_by=sort_by,
             sort_dir=sort_dir,
@@ -593,6 +659,7 @@ def create_app(settings: Settings) -> FastAPI:
         workflow_stage: str = Query(default=""),
         label: str = Query(default=""),
         tracking: str = Query(default=""),
+        assignee: str = Query(default=""),
     ) -> Response:
         """
         Multi-sheet Excel report. The Inventaire sheet honours the current
@@ -604,7 +671,7 @@ def create_app(settings: Settings) -> FastAPI:
             shared_drive=shared_drive, min_size_mb=min_size_mb, max_size_mb=max_size_mb,
             min_duration_sec=min_duration_sec, max_duration_sec=max_duration_sec,
             has_audio=has_audio, asset_type=asset_type, workflow_stage=workflow_stage,
-            label=label, tracking=tracking,
+            label=label, tracking=tracking, assignee=assignee,
         )
 
         def build() -> bytes:
@@ -636,6 +703,7 @@ def create_app(settings: Settings) -> FastAPI:
         workflow_stage: str = Query(default=""),
         label: str = Query(default=""),
         tracking: str = Query(default=""),
+        assignee: str = Query(default=""),
     ) -> StreamingResponse:
         """Flat CSV of the filtered videos, streamed so large libraries do not buffer."""
         filters = _search_filters(
@@ -643,7 +711,7 @@ def create_app(settings: Settings) -> FastAPI:
             shared_drive=shared_drive, min_size_mb=min_size_mb, max_size_mb=max_size_mb,
             min_duration_sec=min_duration_sec, max_duration_sec=max_duration_sec,
             has_audio=has_audio, asset_type=asset_type, workflow_stage=workflow_stage,
-            label=label, tracking=tracking,
+            label=label, tracking=tracking, assignee=assignee,
         )
 
         def rows() -> Any:
@@ -683,6 +751,7 @@ CSV_COLUMNS = [
     "type_actif",
     "etape_production",
     "labels",
+    "responsable",
     "intervenant",
     "predicateur",
     "theme_principal",
@@ -714,6 +783,7 @@ def _csv_row(video: Any, labels: list[dict[str, Any]]) -> list[Any]:
         video.asset_type,
         video.workflow_stage,
         ", ".join(str(label["name"]) for label in labels),
+        video.assigned_user_email,
         video.speaker,
         video.preacher,
         video.main_theme,
@@ -757,6 +827,7 @@ def _search_filters(**kwargs: Any) -> SearchFilters:
         workflow_stage=kwargs["workflow_stage"],
         label=kwargs["label"],
         tracking=kwargs["tracking"],
+        assignee=kwargs.get("assignee", ""),
     )
 
 

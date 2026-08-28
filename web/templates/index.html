@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ app_name }} — Video Library</title>
-  <link rel="stylesheet" href="/static/style.css?v=relink-1">
+  <link rel="stylesheet" href="/static/style.css?v=assign-1">
 </head>
 <body
   data-public-demo="{{ 'true' if public_demo else 'false' }}"
@@ -146,6 +146,14 @@
         <h2>Filters</h2>
 
         <label>
+          Affectée à
+          <select id="assigneeFilter">
+            <option value="">Tout le monde</option>
+            <option value="__none__">Non affectées</option>
+          </select>
+        </label>
+
+        <label>
           Type de fichier
           <select id="assetTypeFilter">
             <option value="">Tous les types</option>
@@ -246,6 +254,7 @@
         {% endif %}
         {% if current_user.is_super_admin %}
         <button id="openDriveConfigButton" type="button" class="btn-secondary">Configurer le dossier Drive</button>
+        <button id="openUsersButton" type="button" class="btn-secondary">Gérer l'équipe</button>
         {% endif %}
         {% endif %}
       </aside>
@@ -291,6 +300,19 @@
       <article id="detailContent"></article>
       <menu>
         <button value="cancel" class="btn-secondary">Close</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="usersDialog" class="wide-dialog">
+    <form method="dialog">
+      <article>
+        <h2>Équipe</h2>
+        <p class="metadata-hint">Comptes pouvant se connecter. Désactiver un compte ferme ses sessions immédiatement.</p>
+        <div id="usersContent"></div>
+      </article>
+      <menu>
+        <button value="cancel" class="btn-secondary">Fermer</button>
       </menu>
     </form>
   </dialog>
@@ -386,6 +408,6 @@
   {% endif %}
 
   <datalist id="labelSuggestions"></datalist>
-  <script src="/static/app.js?v=relink-1"></script>
+  <script src="/static/app.js?v=assign-1"></script>
 </body>
 </html>

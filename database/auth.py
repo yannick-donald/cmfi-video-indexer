@@ -333,6 +333,59 @@ class AuthRepository:
             )
             conn.commit()
 
+    def list_users(self) -> list[dict[str, Any]]:
+        """Every account, for the admin screen and the assignee picker."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, email, is_active, created_at, last_login_at,
+                       email_verified_at
+                FROM users
+                ORDER BY email COLLATE NOCASE
+                """
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "email": row["email"],
+                "is_active": bool(row["is_active"]),
+                "email_verified": bool(row["email_verified_at"]),
+                "created_at": row["created_at"] or "",
+                "last_login_at": row["last_login_at"] or "",
+            }
+            for row in rows
+        ]
+
+    def get_user(self, user_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, email, is_active FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+        if not row:
+            return None
+        return {"id": row["id"], "email": row["email"], "is_active": bool(row["is_active"])}
+
+    def set_user_active(self, user_id: int, is_active: bool) -> dict[str, Any] | None:
+        """
+        Enable or disable an account.
+
+        is_active has always been checked at sign-in and on every request, but
+        nothing could ever set it, so a departing team member could not be cut
+        off. Deactivating also drops their sessions, otherwise an open browser
+        would keep working until the cookie expired.
+        """
+        with self._connect() as conn:
+            if not conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
+                return None
+            conn.execute(
+                "UPDATE users SET is_active = ? WHERE id = ?",
+                (1 if is_active else 0, user_id),
+            )
+            if not is_active:
+                conn.execute("DELETE FROM user_sessions WHERE user_id = ?", (user_id,))
+            conn.commit()
+        return self.get_user(user_id)
+
     def create_session(self, user_id: int, duration_days: int) -> str:
         token = secrets.token_urlsafe(32)
         token_hash = _hash_token(token)

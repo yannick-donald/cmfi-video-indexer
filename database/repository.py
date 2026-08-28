@@ -89,6 +89,10 @@ PRESERVE_ON_RESCAN = CHRISTIAN_METADATA_FIELDS | {
     "source_file_id",
     "workflow_notes",
     "workflow_updated_at",
+    "assigned_user_id",
+    "assigned_user_email",
+    "assigned_at",
+    "assigned_by_email",
     "first_seen_at",
     "reviewed_at",
 }
@@ -111,6 +115,7 @@ class SearchFilters:
     workflow_stage: str = ""
     label: str = ""
     tracking: str = ""
+    assignee: str = ""
 
 
 @dataclass(slots=True)
@@ -732,6 +737,69 @@ class VideoRepository:
                 "workflow_notes": video.workflow_notes,
             },
         )
+
+    def assign_video(
+        self,
+        file_id: str,
+        user_id: int | None,
+        user_email: str,
+        *,
+        assigned_by_email: str,
+    ) -> VideoRecord | None:
+        """
+        Designate who is responsible for a video, or clear the assignment.
+
+        The e-mail is stored alongside the id so that lists and exports need no
+        join, and so the record still reads correctly if the account is later
+        removed. Passing user_id=None unassigns.
+        """
+        with self._connect() as conn:
+            if not conn.execute("SELECT 1 FROM videos WHERE file_id = ?", (file_id,)).fetchone():
+                return None
+            if user_id is None:
+                conn.execute(
+                    """
+                    UPDATE videos
+                    SET assigned_user_id = NULL, assigned_user_email = '',
+                        assigned_at = '', assigned_by_email = ''
+                    WHERE file_id = ?
+                    """,
+                    (file_id,),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE videos
+                    SET assigned_user_id = ?, assigned_user_email = ?,
+                        assigned_at = datetime('now'), assigned_by_email = ?
+                    WHERE file_id = ?
+                    """,
+                    (user_id, user_email, assigned_by_email, file_id),
+                )
+            row = conn.execute("SELECT * FROM videos WHERE file_id = ?", (file_id,)).fetchone()
+            conn.commit()
+        return VideoRecord.from_row(row) if row else None
+
+    def get_assignment_stats(self) -> dict[str, Any]:
+        """Workload per person, so the admin can see how work is spread."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT assigned_user_email AS email, COUNT(*) AS total,
+                       SUM(CASE WHEN workflow_stage = 'published' THEN 1 ELSE 0 END) AS published
+                FROM videos
+                WHERE COALESCE(assigned_user_email, '') != ''
+                GROUP BY assigned_user_email
+                ORDER BY total DESC
+                """
+            ).fetchall()
+            unassigned = conn.execute(
+                "SELECT COUNT(*) FROM videos WHERE COALESCE(assigned_user_id, 0) = 0"
+            ).fetchone()[0]
+        return {
+            "per_user": [dict(row) for row in rows],
+            "unassigned": unassigned,
+        }
 
     def get_workflow_stats(self) -> dict[str, Any]:
         with self._connect() as conn:
@@ -1651,6 +1719,12 @@ class VideoRepository:
                 """
             )
             params.append(_normalize_label(filters.label))
+
+        if filters.assignee == "__none__":
+            clauses.append("COALESCE(assigned_user_id, 0) = 0")
+        elif filters.assignee:
+            clauses.append("assigned_user_email = ?")
+            params.append(filters.assignee.strip().casefold())
 
         if filters.tracking == "new":
             clauses.append("(reviewed_at IS NULL OR reviewed_at = '')")
