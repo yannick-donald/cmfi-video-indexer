@@ -28,6 +28,7 @@ SHEET_ERRORS = "Erreurs"
 WORKFLOW_LABELS = {
     "digitized": "Numérisée",
     "to_review": "À visionner",
+    "watched": "Visionnée",
     "transcribed": "Transcrite",
     "treated": "Traitée",
     "ready_edit": "Prête montage",

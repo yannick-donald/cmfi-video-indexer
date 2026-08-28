@@ -15,6 +15,7 @@ const appMode = {
 const workflowLabels = {
   digitized: "Numérisée",
   to_review: "À visionner",
+  watched: "Visionnée",
   transcribed: "Transcrite",
   treated: "Traitée",
   ready_edit: "Prête montage",
@@ -66,6 +67,7 @@ const els = {
   workflowCutLinked: document.getElementById("workflowCutLinked"),
   workflowDigitized: document.getElementById("workflowDigitized"),
   workflowToReview: document.getElementById("workflowToReview"),
+  workflowWatched: document.getElementById("workflowWatched"),
   workflowTranscribed: document.getElementById("workflowTranscribed"),
   workflowTreated: document.getElementById("workflowTreated"),
   workflowReadyEdit: document.getElementById("workflowReadyEdit"),
@@ -203,6 +205,7 @@ async function loadWorkflowStats() {
   els.workflowCutLinked.textContent = `${(data.linked_cuts || 0).toLocaleString()} associée(s)`;
   els.workflowDigitized.textContent = (stages.digitized || 0).toLocaleString();
   els.workflowToReview.textContent = (stages.to_review || 0).toLocaleString();
+  els.workflowWatched.textContent = (stages.watched || 0).toLocaleString();
   els.workflowTranscribed.textContent = (stages.transcribed || 0).toLocaleString();
   els.workflowTreated.textContent = (stages.treated || 0).toLocaleString();
   els.workflowReadyEdit.textContent = (stages.ready_edit || 0).toLocaleString();

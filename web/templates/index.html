@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ app_name }} — Video Library</title>
-  <link rel="stylesheet" href="/static/style.css?v=selfhost-1">
+  <link rel="stylesheet" href="/static/style.css?v=watched-1">
 </head>
 <body
   data-public-demo="{{ 'true' if public_demo else 'false' }}"
@@ -70,6 +70,10 @@
         <button class="workflow-card" type="button" data-filter-kind="workflow_stage" data-filter-value="to_review">
           <span class="workflow-label">À visionner</span>
           <strong id="workflowToReview">—</strong>
+        </button>
+        <button class="workflow-card" type="button" data-filter-kind="workflow_stage" data-filter-value="watched">
+          <span class="workflow-label">Visionnées</span>
+          <strong id="workflowWatched">—</strong>
         </button>
         <button class="workflow-card" type="button" data-filter-kind="workflow_stage" data-filter-value="transcribed">
           <span class="workflow-label">Transcrites</span>
@@ -170,6 +174,7 @@
             <option value="">Toutes les étapes</option>
             <option value="digitized">Numérisée</option>
             <option value="to_review">À visionner</option>
+            <option value="watched">Visionnée</option>
             <option value="transcribed">Transcrite</option>
             <option value="treated">Traitée · image et son améliorés</option>
             <option value="ready_edit">Prête montage</option>
@@ -359,6 +364,7 @@
             <dl class="status-guide">
               <dt>Numérisée</dt><dd>Cassette convertie en fichier vidéo sur Drive.</dd>
               <dt>À visionner</dt><dd>Contenu à identifier et métadonnées à compléter.</dd>
+              <dt>Visionnée</dt><dd>La vidéo a été visionnée en entier et son contenu est identifié.</dd>
               <dt>Transcrite</dt><dd>Une transcription du contenu est disponible.</dd>
               <dt>Traitée</dt><dd>Le son ou l’image a bénéficié d’une amélioration technique.</dd>
               <dt>Prête montage</dt><dd>Le contenu est validé et exploitable pour le montage.</dd>
@@ -410,6 +416,6 @@
   {% endif %}
 
   <datalist id="labelSuggestions"></datalist>
-  <script src="/static/app.js?v=selfhost-1"></script>
+  <script src="/static/app.js?v=watched-1"></script>
 </body>
 </html>

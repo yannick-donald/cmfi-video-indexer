@@ -825,6 +825,14 @@ tbody td:nth-child(3) {
   background: var(--warning-dim);
 }
 
+/* Visionnée : l'action est faite mais le parcours continue — d'où le bleu,
+   entre l'ambre de « à visionner » et le vert des étapes terminales. */
+.stage-watched {
+  color: var(--info);
+  border-color: rgba(96, 165, 250, .32);
+  background: var(--info-dim);
+}
+
 .stage-treated,
 .stage-published {
   color: var(--success);

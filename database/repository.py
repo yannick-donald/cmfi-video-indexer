@@ -37,6 +37,7 @@ ASSET_TYPES = {"raw", "cut"}
 WORKFLOW_STAGES = {
     "digitized",
     "to_review",
+    "watched",
     "transcribed",
     "treated",
     "ready_edit",
