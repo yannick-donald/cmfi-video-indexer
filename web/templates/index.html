@@ -4,7 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ app_name }} — Video Library</title>
-  <link rel="stylesheet" href="/static/style.css?v=design-1">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css?v=figma-1">
 </head>
 <body
   data-public-demo="{{ 'true' if public_demo else 'false' }}"
@@ -30,9 +33,11 @@
       </div>
       {% if current_user %}
       <div class="account-menu">
-        <span>{{ current_user.email }}</span>
-        {% if current_user.is_super_admin %}<small>Super-administrateur</small>{% endif %}
-        {% if drive_scan_configured %}<small>Scanner Drive disponible</small>{% endif %}
+        <div class="account-identity">
+          <span>{{ current_user.email }}</span>
+          {% if current_user.is_super_admin %}<small>Super-administrateur</small>{% endif %}
+          {% if drive_scan_configured %}<small>Scanner Drive disponible</small>{% endif %}
+        </div>
         <div class="account-actions">
           <button id="helpButton" type="button" class="icon-button" title="Guide de visionnage" aria-label="Guide de visionnage">?</button>
           <button id="logoutButton" type="button" class="btn-secondary">Déconnexion</button>
@@ -408,6 +413,6 @@
   {% endif %}
 
   <datalist id="labelSuggestions"></datalist>
-  <script src="/static/app.js?v=design-1"></script>
+  <script src="/static/app.js?v=figma-1"></script>
 </body>
 </html>
