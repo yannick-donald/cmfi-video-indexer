@@ -9,7 +9,14 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -57,6 +64,7 @@ def create_app(settings: Settings) -> FastAPI:
         public_path = (
             request.url.path == "/health"
             or request.url.path == "/login"
+            or request.url.path == "/favicon.ico"
             or request.url.path.startswith("/api/auth/")
             or request.url.path.startswith("/static/")
         )
@@ -214,6 +222,11 @@ def create_app(settings: Settings) -> FastAPI:
                 "drive_folder": _drive_folder_payload(repo, settings),
             },
         )
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> FileResponse:
+        """Les navigateurs sollicitent la racine, pas /static, pour l'icône."""
+        return FileResponse(STATIC_DIR / "favicon.ico", media_type="image/x-icon")
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
