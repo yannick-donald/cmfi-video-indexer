@@ -40,8 +40,8 @@ LOGGER = logging.getLogger(__name__)
 
 def create_app(settings: Settings) -> FastAPI:
     settings.ensure_dirs()
-    repo = VideoRepository(settings.db_path)
-    auth_repo = AuthRepository(settings.db_path)
+    repo = VideoRepository(settings.db_path, settings.database_url)
+    auth_repo = AuthRepository(settings.db_path, settings.database_url)
     email_sender = EmailSender(settings)
     if settings.purge_demo_data:
         deleted_demo_count = repo.delete_demo_videos()

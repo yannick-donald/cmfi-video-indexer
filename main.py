@@ -133,7 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def write_report(settings: Settings, output: str | None = None) -> Path:
-    repo = VideoRepository(settings.db_path)
+    repo = VideoRepository(settings.db_path, settings.database_url)
     destination = Path(output) if output else settings.excel_output_path
     summary = export_to_path(repo, destination)
     logging.getLogger("main").info(
@@ -157,7 +157,7 @@ def main() -> int:
     logger = logging.getLogger("main")
 
     if args.command == "seed-demo":
-        repo = VideoRepository(settings.db_path)
+        repo = VideoRepository(settings.db_path, settings.database_url)
         seed_demo_data(repo)
         logger.info("Demo videos inserted into %s", settings.db_path)
         return 0

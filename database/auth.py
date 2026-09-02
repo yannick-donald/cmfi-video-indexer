@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from database.driver import Connection, make_driver
 from database.schema import init_database
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -39,15 +40,14 @@ class LoginThrottledError(AuthError):
 
 
 class AuthRepository:
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, database_url: str = "") -> None:
         self.db_path = db_path
-        init_database(db_path)
+        self.driver = make_driver(database_url, db_path)
+        if self.driver.dialect == "sqlite":
+            init_database(db_path)
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
+    def _connect(self) -> Connection:
+        return self.driver.connect()
 
     def create_user(
         self,

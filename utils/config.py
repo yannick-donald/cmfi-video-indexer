@@ -67,8 +67,38 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = Field(default=True, alias="SMTP_USE_TLS")
     smtp_use_ssl: bool = Field(default=False, alias="SMTP_USE_SSL")
 
+    # ── Base de données ────────────────────────────────────────────────────
+    # Vide = SQLite, c'est-à-dire le comportement de la production, qui ne
+    # définit pas cette variable. Une URL postgresql:// bascule le pilote.
+    database_url: str = Field(default="", alias="DATABASE_URL")
+
+    # ── Transcription ──────────────────────────────────────────────────────
+    # « auto » est délibéré : forcer une langue sur de l'audio bilingue fait
+    # traduire Whisper silencieusement, ce qui fabriquerait des citations
+    # attribuées à un orateur qui n'a jamais prononcé ces mots.
+    whisper_model: str = Field(default="base", alias="WHISPER_MODEL")
+    whisper_language: str = Field(default="auto", alias="WHISPER_LANGUAGE")
+    whisper_compute_type: str = Field(default="int8", alias="WHISPER_COMPUTE_TYPE")
+
+    # ── Modèle de langue ───────────────────────────────────────────────────
+    llm_provider: str = Field(default="ollama", alias="LLM_PROVIDER")
+    ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")
+    ollama_model_fast: str = Field(default="qwen2.5:3b", alias="OLLAMA_MODEL_FAST")
+    ollama_model_quality: str = Field(default="qwen2.5:7b", alias="OLLAMA_MODEL_QUALITY")
+
+    # ── Plongements et découpage ───────────────────────────────────────────
+    embedding_model: str = Field(default="intfloat/multilingual-e5-small", alias="EMBEDDING_MODEL")
+    embedding_dim: int = Field(default=384, alias="EMBEDDING_DIM")
+    chunk_size: int = Field(default=900, alias="CHUNK_SIZE")
+    chunk_overlap: int = Field(default=150, alias="CHUNK_OVERLAP")
+
+    # ── Worker d'ingestion ─────────────────────────────────────────────────
+    max_retries: int = Field(default=3, alias="MAX_RETRIES")
+    temp_dir: Path = Field(default=Path("cache/tmp"), alias="TEMP_DIR")
+
     def ensure_dirs(self) -> None:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         Path("logs").mkdir(parents=True, exist_ok=True)
+        self.temp_dir.mkdir(parents=True, exist_ok=True)

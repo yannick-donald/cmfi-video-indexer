@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from database.models import VideoRecord
+from database.driver import Connection, make_driver
 from database.schema import init_database
 from metadata_cleaning.youtube_title import propose_title
 from reporting.duplicates import normalize_for_comparison
@@ -129,15 +130,16 @@ class SearchResult:
 
 
 class VideoRepository:
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, database_url: str = "") -> None:
         self.db_path = db_path
-        init_database(db_path)
+        # Vide = SQLite, le chemin de la production. Une URL postgresql://
+        # bascule le pilote sans rien changer au reste de cette classe.
+        self.driver = make_driver(database_url, db_path)
+        if self.driver.dialect == "sqlite":
+            init_database(db_path)
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
+    def _connect(self) -> Connection:
+        return self.driver.connect()
 
     def delete_demo_videos(self) -> int:
         with self._connect() as conn:
