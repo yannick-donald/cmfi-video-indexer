@@ -2,3 +2,4 @@
 # La production tourne sur SQLite et n'a besoin d'aucune de ces bibliothèques.
 psycopg[binary]>=3.2.0
 faster-whisper>=1.0.0
+fastembed>=0.8.0

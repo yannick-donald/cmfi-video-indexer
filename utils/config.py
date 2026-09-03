@@ -87,7 +87,10 @@ class Settings(BaseSettings):
     ollama_model_quality: str = Field(default="qwen2.5:7b", alias="OLLAMA_MODEL_QUALITY")
 
     # ── Plongements et découpage ───────────────────────────────────────────
-    embedding_model: str = Field(default="intfloat/multilingual-e5-small", alias="EMBEDDING_MODEL")
+    embedding_model: str = Field(
+        default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        alias="EMBEDDING_MODEL",
+    )
     embedding_dim: int = Field(default=384, alias="EMBEDDING_DIM")
     chunk_size: int = Field(default=900, alias="CHUNK_SIZE")
     chunk_overlap: int = Field(default=150, alias="CHUNK_OVERLAP")
