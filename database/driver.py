@@ -58,6 +58,16 @@ def _to_pyformat(sql: str) -> str:
 # Horodatage UTC au format texte, identique à celui de SQLite. Les colonnes de
 # dates sont en TEXT : si les deux moteurs ne produisent pas la même chaîne,
 # les comparaisons de dates divergent sans rien signaler.
+FTS_FIELDS = [
+    "internal_video_id", "file_name", "clean_title", "editorial_title",
+    "original_title", "alternate_titles", "folder_path", "speaker", "preacher",
+    "ministry", "main_theme", "spiritual_themes", "doctrine_topics",
+    "biblical_topics", "bible_references", "songs", "worship_leaders",
+    "content_type", "event_name", "location", "series_name", "teaching_type",
+    "ai_summary", "transcript_summary", "keywords", "semantic_tags",
+]
+
+
 PG_NOW = "to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')"
 
 
@@ -77,6 +87,12 @@ def to_postgres(sql: str) -> str:
     sql = sql.replace("datetime('now')", PG_NOW)
 
     # 2) Tri insensible à la casse (29 sites, surtout des ORDER BY de titres).
+    #
+    # PostgreSQL refuse toute expression de tri absente de la sélection quand la
+    # requête est DISTINCT — et il compte `LOWER(x)` comme `x COLLATE "…"` parmi
+    # ces expressions. Les trois requêtes DISTINCT concernées trient donc en
+    # Python (voir `get_filter_options`), ce qui donne en prime un ordre
+    # rigoureusement identique sur les deux moteurs. Ici, `LOWER()` suffit.
     sql = re.sub(r'([\w".]+)\s+COLLATE\s+NOCASE', r"LOWER(\1)", sql, flags=re.IGNORECASE)
 
     # 3) Recherche plein texte : FTS5 d'un côté, tsvector de l'autre.
@@ -148,7 +164,12 @@ class Connection:
 
     def executemany(self, sql: str, seq: Any) -> Any:
         if self._dialect == "postgresql":
-            sql = to_postgres(sql)
+            # sqlite3 offre `executemany` sur la connexion ; psycopg ne
+            # l'expose que sur le curseur. Le dépôt écrit du sqlite3, donc
+            # c'est ici qu'on rétablit l'équivalence.
+            cursor = self._raw.cursor()
+            cursor.executemany(to_postgres(sql), seq)
+            return cursor
         return self._raw.executemany(sql, seq)
 
     def commit(self) -> None:
@@ -222,6 +243,15 @@ class Driver(ABC):
     def fts_query(self, raw: str) -> str:
         """Traduit la saisie de l'utilisateur dans la syntaxe du moteur."""
 
+    @abstractmethod
+    def fts_upsert(self, conn: "Connection", payload: dict[str, Any]) -> None:
+        """Réécrit l'entrée d'index d'une vidéo.
+
+        C'est le seul écart qui ne se traduit pas par une réécriture de chaîne :
+        FTS5 range 26 champs dans autant de colonnes, PostgreSQL les fond dans
+        un unique `tsvector`. Les deux formes n'ont pas la même arité.
+        """
+
 
 class SQLiteDriver(Driver):
     dialect = "sqlite"
@@ -265,6 +295,16 @@ class SQLiteDriver(Driver):
         # FTS5 : chaque terme préfixé, joints par AND implicite.
         terms = [t for t in re.split(r"[^\w]+", raw or "", flags=re.UNICODE) if t]
         return " ".join(f'"{t}"*' for t in terms)
+
+    def fts_upsert(self, conn: "Connection", payload: dict[str, Any]) -> None:
+        file_id = payload.get("file_id", "")
+        conn.execute("DELETE FROM videos_fts WHERE file_id = ?", (file_id,))
+        cols = ["file_id", *FTS_FIELDS]
+        marks = ", ".join("?" for _ in cols)
+        conn.execute(
+            f"INSERT INTO videos_fts({', '.join(cols)}) VALUES({marks})",
+            tuple(str(payload.get(c, "") or "") for c in cols),
+        )
 
 
 class PostgresDriver(Driver):
@@ -319,6 +359,16 @@ class PostgresDriver(Driver):
     def fts_query(self, raw: str) -> str:
         # websearch_to_tsquery accepte la langue naturelle telle quelle.
         return (raw or "").strip()
+
+    def fts_upsert(self, conn: "Connection", payload: dict[str, Any]) -> None:
+        file_id = payload.get("file_id", "")
+        texte = " ".join(str(payload.get(f, "") or "") for f in FTS_FIELDS)
+        conn.execute(
+            "INSERT INTO videos_fts(file_id, document) "
+            "VALUES(?, to_tsvector('french', ?)) "
+            "ON CONFLICT (file_id) DO UPDATE SET document = EXCLUDED.document",
+            (file_id, texte),
+        )
 
 
 def make_driver(database_url: str = "", db_path: Path | str = "") -> Driver:

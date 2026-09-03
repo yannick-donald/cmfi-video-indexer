@@ -12,19 +12,45 @@ from __future__ import annotations
 
 import argparse
 import logging
+import shutil
 import sqlite3
 import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from database.driver import make_driver  # noqa: E402
+from database.schema import init_database  # noqa: E402
 from database.schema_pg import FTS_FIELDS, FTS_SHADOW, ensure_postgres_schema  # noqa: E402
 from utils.config import Settings  # noqa: E402
 from utils.logging import configure_logging  # noqa: E402
 
 LOGGER = logging.getLogger(__name__)
 BATCH = 500
+
+
+@contextmanager
+def migrated_source(path: Path):
+    """Rend une copie de la base SQLite, migrations appliquées.
+
+    Le fichier sur disque est en retard sur le code : l'application ajoute ses
+    colonnes au démarrage, pas à l'écriture. Au moment de cet audit, le fichier
+    portait 68 colonnes et `init_database` en ajoutait 6. Introspecter le
+    fichier tel quel produirait donc un schéma PostgreSQL incomplet, et les
+    lectures échoueraient sur les colonnes manquantes.
+
+    On travaille sur une copie : le script ne modifie jamais la base source.
+    """
+    workdir = Path(tempfile.mkdtemp(prefix="ztf-migration-"))
+    copie = workdir / path.name
+    try:
+        shutil.copy(path, copie)
+        init_database(copie)
+        yield copie
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
 def _sqlite_tables(path: Path) -> list[str]:
@@ -57,8 +83,6 @@ def _copy_table(sqlite_path: Path, driver, table: str, reset: bool) -> int:
 
         copied = 0
         with driver.connect() as dst:
-            if reset:
-                dst.execute(f'TRUNCATE TABLE "{table}" CASCADE')
             cursor = src.execute(f'SELECT {quoted} FROM "{table}"')
             while True:
                 rows = cursor.fetchmany(BATCH)
@@ -135,7 +159,7 @@ def main() -> int:
     args = parser.parse_args()
 
     settings = Settings()
-    configure_logging(settings.log_level)
+    configure_logging(settings.log_level, Path("logs/app.log"))
 
     sqlite_path = Path(args.sqlite) if args.sqlite else settings.db_path
     if not sqlite_path.exists():
@@ -148,28 +172,39 @@ def main() -> int:
         return 1
 
     driver = make_driver(database_url)
-    tables = _sqlite_tables(sqlite_path)
 
-    if args.check:
-        return 0 if _compare(sqlite_path, driver, tables) else 1
+    with migrated_source(sqlite_path) as source:
+        tables = _sqlite_tables(source)
 
-    print("  création du schéma…")
-    made = ensure_postgres_schema(driver, sqlite_path)
-    print(f"    {made['tables']} tables, {made['index']} index")
+        if args.check:
+            return 0 if _compare(source, driver, tables) else 1
 
-    print("  copie des données…")
-    for table in tables:
-        n = _copy_table(sqlite_path, driver, table, args.reset)
-        print(f"    {table:26} {n:8} lignes")
+        if args.reset:
+            # `CREATE TABLE IF NOT EXISTS` ne modifie pas une table existante :
+            # sans cette remise à plat, un schéma déjà créé avec d'anciennes
+            # colonnes resterait tel quel et la migration mentirait.
+            print("  remise à plat du schéma…")
+            with driver.connect() as conn:
+                conn.execute("DROP SCHEMA public CASCADE")
+                conn.execute("CREATE SCHEMA public")
 
-    print("  recalage des compteurs…")
-    _resync_sequences(driver, tables)
+        print("  création du schéma…")
+        made = ensure_postgres_schema(driver, source)
+        print(f"    {made['tables']} tables, {made['index']} index")
 
-    print("  reconstruction de l'index plein texte…")
-    print(f"    videos_fts                 {_rebuild_fts(driver):8} lignes")
+        print("  copie des données…")
+        for table in tables:
+            n = _copy_table(source, driver, table, args.reset)
+            print(f"    {table:26} {n:8} lignes")
 
-    print("\n  vérification :")
-    ok = _compare(sqlite_path, driver, tables)
+        print("  recalage des compteurs…")
+        _resync_sequences(driver, tables)
+
+        print("  reconstruction de l'index plein texte…")
+        print(f"    videos_fts                 {_rebuild_fts(driver):8} lignes")
+
+        print("\n  vérification :")
+        ok = _compare(source, driver, tables)
     print("\n  RÉSULTAT :", "les deux bases concordent" if ok else "ÉCARTS DÉTECTÉS")
     return 0 if ok else 1
 

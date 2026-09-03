@@ -98,3 +98,16 @@ class TestEquivalences:
     def test_les_deux_produisent_un_filtre_a_un_parametre(self, paire):
         for d in paire:
             assert d.fts_filter().count("?") == 1
+
+
+class TestEcartsDApi:
+    """Différences entre sqlite3 et psycopg que le pilote doit masquer."""
+
+    def test_executemany_existe_sur_la_connexion(self, tmp_path):
+        # sqlite3 l'offre sur la connexion, psycopg seulement sur le curseur.
+        # Le dépôt écrit du sqlite3 : l'équivalence se rétablit dans le pilote.
+        d = make_driver(db_path=tmp_path / "x.db")
+        with d.connect() as c:
+            c.execute("CREATE TABLE t(a INTEGER, b TEXT)")
+            c.executemany("INSERT INTO t(a,b) VALUES(?,?)", [(1, "x"), (2, "y")])
+            assert c.execute("SELECT COUNT(*) FROM t").fetchone()[0] == 2

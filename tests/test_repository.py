@@ -13,13 +13,15 @@ from database.repository import SearchFilters, VideoRepository
 
 
 @pytest.fixture
-def repo(real_db_copy):
-    return VideoRepository(real_db_copy)
+def repo(real_db_copy, backend):
+    """Le même dépôt, sur SQLite puis sur PostgreSQL."""
+    return VideoRepository(real_db_copy, backend)
 
 
 class TestPilote:
-    def test_le_depot_utilise_sqlite_par_defaut(self, repo):
-        assert repo.driver.dialect == "sqlite"
+    def test_le_depot_choisit_le_bon_moteur(self, repo, backend):
+        attendu = "postgresql" if backend else "sqlite"
+        assert repo.driver.dialect == attendu
 
     def test_connexion_utilisable_avec_et_sans_with(self, repo):
         with repo._connect() as conn:
@@ -73,7 +75,11 @@ class TestEcriture:
 
     @pytest.fixture
     def un_fichier(self, repo):
-        return repo.search(SearchFilters(), page_size=1).items[0].file_id
+        # La base PostgreSQL est partagée sur la session, contrairement à la
+        # copie SQLite qui est neuve à chaque test. Les écritures visent donc
+        # la dernière vidéo, que les tests de lecture ne regardent jamais.
+        res = repo.search(SearchFilters(), sort_by="file_name", sort_dir="desc", page_size=1)
+        return res.items[0].file_id
 
     def test_workflow_ecrit_un_horodatage(self, repo, un_fichier):
         # Passe par datetime('now').
