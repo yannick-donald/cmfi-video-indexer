@@ -30,6 +30,8 @@ def main() -> int:
     p.add_argument("video", help="fichier vidéo ou audio local")
     p.add_argument("--model", default="", help="taille du modèle Whisper")
     p.add_argument("--language", default="", help="langue forcée (déconseillé)")
+    p.add_argument("--audio-only", action="store_true",
+                   help="s'arrêter après l'extraction audio (pas de transcription)")
     p.add_argument("--keep-audio", action="store_true", help="ne pas supprimer le WAV")
     p.add_argument("--segments", type=int, default=12, help="segments à afficher")
     args = p.parse_args()
@@ -56,7 +58,15 @@ def main() -> int:
     print("\n  ── extraction audio ──")
     t0 = time.monotonic()
     extract_audio(source, wav, ffmpeg_bin_dir=s.ffmpeg_bin_dir)
-    print(f"  {wav.name}  {wav.stat().st_size / 1024**2:.1f} Mo  en {time.monotonic() - t0:.1f} s")
+    taille = wav.stat().st_size / 1024**2
+    print(f"  {wav.name}  {taille:.1f} Mo  en {time.monotonic() - t0:.1f} s")
+    gain = source.stat().st_size / wav.stat().st_size if wav.stat().st_size else 0
+    print(f"  {gain:.0f}× plus léger que la vidéo")
+
+    if args.audio_only:
+        print(f"\n  audio conservé : {wav}")
+        print("  (transcription non lancée : --audio-only)")
+        return 0
 
     print(f"\n  ── transcription (modèle « {modele} », langue « {langue} ») ──")
     t0 = time.monotonic()
