@@ -92,6 +92,9 @@ class Settings(BaseSettings):
         alias="EMBEDDING_MODEL",
     )
     embedding_dim: int = Field(default=384, alias="EMBEDDING_DIM")
+    # Jeton partagé avec le worker de transcription, qui tourne hors du
+    # conteneur. Vide = les routes /api/worker sont fermées.
+    worker_token: str = Field(default="", alias="WORKER_TOKEN")
     chunk_size: int = Field(default=900, alias="CHUNK_SIZE")
     chunk_overlap: int = Field(default=150, alias="CHUNK_OVERLAP")
 

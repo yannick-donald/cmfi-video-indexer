@@ -63,12 +63,23 @@ def transcribe(
     compute_type: str = "int8",
     on_segment: Callable[[Segment], None] | None = None,
     model: Any | None = None,
+    condition_on_previous_text: bool = False,
 ) -> Transcript:
     """Transcrit un fichier audio en segments horodatés.
 
-    `language="auto"` laisse Whisper détecter, ce qui est le réglage attendu ici.
-    Une valeur explicite est acceptée pour du contenu qu'on sait monolingue,
-    mais elle est dangereuse sur ce corpus.
+    `language="auto"` laisse Whisper détecter. Attention : **sur ce corpus la
+    détection est peu fiable** — mesurée le 4 septembre 2026 sur
+    CHR-VID-000343, elle a proposé du yoruba à 41 % sur un passage d'anglais
+    parfaitement lisible. Ces réunions sont bilingues, un orateur anglophone
+    et son interprète francophone ; forcer `language="en"` y donne un texte
+    exploitable là où la détection automatique et le français donnent du
+    charabia. Sur un corpus de cette nature, une valeur explicite est donc le
+    réglage sûr, pas le réglage risqué.
+
+    `condition_on_previous_text=False` par défaut, à l'inverse de
+    faster-whisper. Le conditionnement fait boucler le modèle sur un son
+    bruité — « Le ponteur est continuement actif » cinq fois de suite. Sans
+    lui : deux répétitions sur 844 segments.
     """
     audio_path = Path(audio_path)
     if not audio_path.exists():
@@ -85,6 +96,7 @@ def transcribe(
         vad_filter=True,            # coupe les silences, fréquents en convention
         word_timestamps=False,
         beam_size=1,                # sur deux cœurs, un faisceau large ne paie pas
+        condition_on_previous_text=condition_on_previous_text,
     )
 
     segments: list[Segment] = []

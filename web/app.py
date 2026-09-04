@@ -5,6 +5,7 @@ import csv
 import io
 import logging
 from datetime import UTC, datetime
+from hmac import compare_digest
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,10 @@ from auth.drive_auth import authenticate
 from drive_scanner.client import build_drive_service
 from drive_scanner.scanner import FOLDER_MIME
 from drive_scanner.runner import run_scan
+from classification.transcript_enricher import enrich_from_transcript
+from database.knowledge_repository import KnowledgeRepository
+from ingestion.jobs import JobQueue
+from knowledge.chunking import Segment
 from reporting.excel_exporter import export_to_stream
 from utils.config import Settings
 from utils.formatters import format_bytes, format_duration
@@ -51,6 +56,8 @@ def create_app(settings: Settings) -> FastAPI:
         seed_public_demo(repo)
     if settings.admin_email and settings.admin_password:
         auth_repo.ensure_user(settings.admin_email, settings.admin_password)
+
+    queue = JobQueue(repo.driver, max_retries=settings.max_retries)
 
     app = FastAPI(title="Google Drive Video Library", version="1.0.0")
     scan_lock = asyncio.Lock()
@@ -299,6 +306,163 @@ def create_app(settings: Settings) -> FastAPI:
         if not video:
             raise HTTPException(status_code=404, detail="Video not found")
         return {"file_id": file_id, "source_file_id": video.source_file_id, "asset_type": video.asset_type}
+
+    # ── Pont worker ─────────────────────────────────────────────────────
+    # La base de prod est un fichier SQLite sur le disque de Render : aucune
+    # machine extérieure ne peut l'ouvrir. Le worker de transcription, qui a
+    # besoin d'un CPU que ce service n'a pas, passe donc par ces deux routes.
+    # Il travaille seul, à son rythme, sans rien attendre de l'interface.
+
+    knowledge = KnowledgeRepository(repo.driver, settings.embedding_dim)
+
+    def _verifier_jeton(request: Request) -> None:
+        attendu = settings.worker_token.strip()
+        if not attendu:
+            raise HTTPException(status_code=503, detail="Worker bridge disabled")
+        entete = request.headers.get("x-worker-token", "")
+        if not compare_digest(entete, attendu):
+            raise HTTPException(status_code=401, detail="Invalid worker token")
+
+    @app.get("/api/worker/pending")
+    async def worker_pending(
+        request: Request,
+        limit: int = Query(20, ge=1, le=200),
+        asset_type: str = Query("", description="'cut' pour ne prendre que les découpes"),
+    ) -> dict[str, Any]:
+        """Les vidéos qui n'ont pas encore de transcription.
+
+        Le worker interroge cette route, prend ce qu'il veut et n'annonce rien :
+        déposer une transcription suffit à faire sortir une vidéo de la liste.
+        """
+        _verifier_jeton(request)
+        conditions = ["COALESCE(v.internal_video_id, v.file_id) NOT IN (SELECT source_uid FROM transcripts)"]
+        params: list[Any] = []
+        if asset_type:
+            conditions.append("v.asset_type = ?")
+            params.append(asset_type)
+        params.append(limit)
+        with repo._connect() as conn:
+            lignes = conn.execute(
+                f"""
+                SELECT v.file_id, v.internal_video_id, v.file_name, v.folder_path,
+                       v.asset_type, v.file_size, v.duration_seconds, v.drive_url
+                FROM videos v
+                WHERE {' AND '.join(conditions)}
+                ORDER BY COALESCE(v.file_size, 0) ASC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return {"count": len(lignes), "videos": [dict(l) for l in lignes]}
+
+    @app.post("/api/worker/{file_id}/transcript")
+    async def worker_deposer(request: Request, file_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Reçoit une transcription, la range, puis en déduit les métadonnées.
+
+        L'enrichissement est fait ici et non chez le worker : le vocabulaire
+        éditorial appartient à la base, pas à la machine qui a du CPU.
+        """
+        _verifier_jeton(request)
+        video = repo.get_video(file_id)
+        if not video:
+            raise HTTPException(status_code=404, detail="Video not found")
+
+        bruts = payload.get("segments") or []
+        if not bruts:
+            raise HTTPException(status_code=400, detail="segments is required")
+
+        segments = [
+            Segment(
+                start=float(s.get("start") or 0.0),
+                end=float(s.get("end") or 0.0),
+                text=str(s.get("text") or "").strip(),
+                language=str(s.get("language") or ""),
+            )
+            for s in bruts
+        ]
+        segments = [s for s in segments if s.text]
+        if not segments:
+            raise HTTPException(status_code=400, detail="every segment is empty")
+
+        source_uid = video.internal_video_id or file_id
+        knowledge.save_transcript(
+            source_uid,
+            segments,
+            model=str(payload.get("model") or "?"),
+            languages=payload.get("languages") or [],
+            duration=float(payload.get("duration") or 0.0),
+        )
+
+        # L'étiquetage ne doit pas faire perdre une transcription déjà payée.
+        enrichissement: dict[str, Any] = {"applied": False}
+        try:
+            deduit = enrich_from_transcript(segments)
+            if not deduit.is_empty:
+                enrichissement = repo.apply_transcript_enrichment(file_id, deduit)
+                enrichissement["applied"] = True
+                enrichissement["main_theme"] = deduit.main_theme
+        except Exception as erreur:                       # noqa: BLE001
+            LOGGER.warning("[%s] enrichissement abandonné : %s", file_id, erreur)
+            enrichissement["error"] = str(erreur)
+
+        # Si la vidéo avait été mise en file par le bouton, elle n'a plus lieu
+        # d'y rester : le travail est fait.
+        if queue.get(file_id):
+            queue.reset(file_id)
+        LOGGER.info("[%s] transcription reçue : %d segments", file_id, len(segments))
+        return {
+            "file_id": file_id,
+            "source_uid": source_uid,
+            "segments": len(segments),
+            "enrichment": enrichissement,
+        }
+
+    # ── Transcription ───────────────────────────────────────────────────
+    # Le service web **met en file**, il ne transcrit pas. Whisper est un
+    # travail CPU de plusieurs heures par vidéo : le lancer ici bloquerait les
+    # requêtes et ferait échouer le health check. Un worker séparé consomme la
+    # file, où qu'il tourne.
+
+    def _etat_transcription(file_id: str) -> dict[str, Any]:
+        video = repo.get_video(file_id)
+        if not video:
+            raise HTTPException(status_code=404, detail="Video not found")
+        source_uid = video.internal_video_id or file_id
+        with repo._connect() as conn:
+            ligne = conn.execute(
+                "SELECT segment_count, duration_seconds, model, created_at"
+                " FROM transcripts WHERE source_uid = ?",
+                (source_uid,),
+            ).fetchone()
+        job = queue.get(file_id)
+        return {
+            "file_id": file_id,
+            "state": job.state if job else ("done" if ligne else "absent"),
+            "step": getattr(job, "step", "") if job else "",
+            "attempts": getattr(job, "attempts", 0) if job else 0,
+            "error": getattr(job, "error", "") if job else "",
+            "transcript": dict(ligne) if ligne else None,
+        }
+
+    @app.get("/api/videos/{file_id}/transcription")
+    async def transcription_status(file_id: str) -> dict[str, Any]:
+        return _etat_transcription(file_id)
+
+    @app.post("/api/videos/{file_id}/transcribe")
+    async def transcribe_video(request: Request, file_id: str) -> dict[str, Any]:
+        _require_writable(settings)
+        if settings.auth_required and not request.state.user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        if not repo.get_video(file_id):
+            raise HTTPException(status_code=404, detail="Video not found")
+        ajoutes = queue.enqueue([file_id])
+        etat = _etat_transcription(file_id)
+        etat["queued"] = bool(ajoutes)
+        etat["message"] = (
+            "Vidéo mise en file. Un worker la prendra au prochain passage."
+            if ajoutes else "Cette vidéo est déjà dans la file."
+        )
+        return etat
 
     @app.get("/api/scan-folder/status")
     async def scan_folder_status(request: Request) -> dict[str, Any]:

@@ -14,7 +14,7 @@ client_secret*.json
 cache/
 
 database/*.sqlite3
-database/*.sqlite3-*
+database/*.sqlite3*
 database/*.backup*
 
 logs/
