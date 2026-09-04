@@ -1080,12 +1080,14 @@ dialog h2 {
 .assignee-block,
 .label-editor,
 .workflow-editor,
+.transcription-panel,
 .metadata-editor {
   margin-top: 22px;
   padding-top: 18px;
   border-top: 1px solid var(--border);
 }
 
+.transcription-panel h3,
 .assignee-block h3,
 .metadata-header h3,
 .workflow-editor h3,
@@ -1722,3 +1724,32 @@ dialog h2 {
     padding: 12px 16px;
   }
 }
+
+/* État de transcription : la couleur double le texte, jamais elle ne le remplace. */
+.transcription-state {
+  margin: 0 0 6px;
+  font-size: 0.92rem;
+}
+
+.transcription-state::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--muted, #8a8f98);
+  vertical-align: middle;
+}
+
+.transcription-state[data-state="done"]::before,
+.transcription-state[data-state="completed"]::before { background: #2e7d5b; }
+.transcription-state[data-state="failed"]::before { background: #b3402c; }
+.transcription-state[data-state="transcribing"]::before,
+.transcription-state[data-state="downloading"]::before,
+.transcription-state[data-state="extracting_audio"]::before,
+.transcription-state[data-state="generating_metadata"]::before,
+.transcription-state[data-state="chunking"]::before,
+.transcription-state[data-state="embedding"]::before,
+.transcription-state[data-state="indexing"]::before,
+.transcription-state[data-state="pending"]::before { background: #b8860b; }

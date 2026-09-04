@@ -683,6 +683,7 @@ async function showDetails(fileId) {
     )
     .join("") +
     renderAssignee(item, await loadTeam()) +
+    renderTranscription(item, await loadTranscriptionState(fileId)) +
     renderLabelEditor(item) +
     (await renderWorkflowEditor(item)) +
     renderChristianMetadataEditor(item);
@@ -697,6 +698,89 @@ function renderLabelBadges(labels) {
 
 function renderLabelChips(labels) {
   return labels.map((label) => `<span class="video-label">${escapeHtml(label.name)}</span>`).join("");
+}
+
+const ETATS_TRANSCRIPTION = {
+  absent: "Pas encore transcrite",
+  pending: "En file d'attente",
+  downloading: "Téléchargement",
+  downloaded: "Téléchargée",
+  extracting_audio: "Extraction de l'audio",
+  transcribing: "Transcription en cours",
+  generating_metadata: "Métadonnées",
+  chunking: "Découpage",
+  embedding: "Plongements",
+  indexing: "Indexation",
+  completed: "Terminée",
+  done: "Transcrite",
+  failed: "Échec",
+};
+
+function renderTranscription(item, etat) {
+  const cle = etat && etat.state ? etat.state : "absent";
+  const libelle = ETATS_TRANSCRIPTION[cle] || cle;
+  const enCours = !["absent", "done", "completed", "failed"].includes(cle);
+  const transcrite = Boolean(etat && etat.transcript);
+
+  let detail = "";
+  if (transcrite) {
+    const t = etat.transcript;
+    detail = `<p class="metadata-hint">${t.segment_count} segments · modèle ${escapeHtml(String(t.model || "?"))}.</p>`;
+  } else if (cle === "failed") {
+    detail = `<p class="metadata-hint">Dernière erreur : ${escapeHtml(String(etat.error || "inconnue"))} (${etat.attempts} tentative(s)).</p>`;
+  } else if (enCours) {
+    detail = `<p class="metadata-hint">Étape en cours : ${escapeHtml(String(etat.step || libelle))}.</p>`;
+  } else {
+    detail = `<p class="metadata-hint">Le bouton met la vidéo en file. La transcription tourne sur un worker séparé, pas sur ce serveur : compter environ une heure de calcul pour trois heures de vidéo.</p>`;
+  }
+
+  const bouton = appMode.readOnly
+    ? ""
+    : `<button id="transcribeButton" type="button" ${enCours ? "disabled" : ""}>${
+        transcrite ? "Retranscrire" : "Lancer la transcription"
+      }</button>`;
+
+  return `
+    <section class="transcription-panel">
+      <div class="metadata-header">
+        <h3>Transcription</h3>
+        ${bouton}
+      </div>
+      <p class="transcription-state" data-state="${escapeAttr(cle)}"><strong>${escapeHtml(libelle)}</strong></p>
+      ${detail}
+      <p id="transcribeStatus" class="filters-status"></p>
+    </section>`;
+}
+
+async function loadTranscriptionState(fileId) {
+  try {
+    const response = await fetch(`/api/videos/${encodeURIComponent(fileId)}/transcription`);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch (error) {
+    return null;
+  }
+}
+
+async function queueTranscription() {
+  const fileId = els.detailContent.dataset.fileId;
+  const status = document.getElementById("transcribeStatus");
+  const button = document.getElementById("transcribeButton");
+  button.disabled = true;
+  status.textContent = "Mise en file...";
+  try {
+    const response = await fetch(`/api/videos/${encodeURIComponent(fileId)}/transcribe`, {
+      method: "POST",
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    status.textContent = data.message || "Mise en file.";
+    const panneau = document.querySelector(".transcription-panel");
+    if (panneau) panneau.outerHTML = renderTranscription(null, data);
+  } catch (error) {
+    status.textContent = `Échec : ${error.message}`;
+    button.disabled = false;
+  }
 }
 
 function renderLabelEditor(item) {
@@ -1328,6 +1412,9 @@ els.detailContent.addEventListener("click", (event) => {
   }
   if (target.id === "saveLabelsButton") {
     saveLabels();
+  }
+  if (target.id === "transcribeButton") {
+    queueTranscription();
   }
   if (target.classList.contains("copy-id-btn")) {
     copyInternalId(target);
