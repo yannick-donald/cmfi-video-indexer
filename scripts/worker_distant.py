@@ -155,7 +155,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--url", default=os.getenv("CMFI_URL", "https://cmfi-video-indexer.org"))
-    ap.add_argument("--token", default=os.getenv("WORKER_TOKEN", ""))
+    ap.add_argument("--token", default="",
+                    help="défaut : WORKER_TOKEN de l'environnement, sinon du .env")
     ap.add_argument("--limit", type=int, default=20, help="vidéos par passage")
     ap.add_argument("--asset-type", default="", help="'cut' pour ne prendre que les découpes")
     ap.add_argument("--language", default="en",
@@ -166,11 +167,15 @@ def main() -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s",
                         datefmt="%H:%M:%S")
-    if not args.token:
-        sys.exit("Aucun jeton. Renseigne WORKER_TOKEN ou --token.")
-
-    pont = Pont(args.url, args.token)
     settings = Settings()
+    # Le jeton ne devrait pas avoir à passer par une ligne de commande, où il
+    # finit dans l'historique du shell : le .env du dépôt est déjà l'endroit
+    # des secrets, et il est ignoré par git.
+    jeton = args.token or os.getenv("WORKER_TOKEN", "") or settings.worker_token
+    if not jeton:
+        sys.exit("Aucun jeton. Ajoute WORKER_TOKEN=… au .env du dépôt, "
+                 "ou exporte-le dans ton shell.")
+    pont = Pont(args.url, jeton)
 
     a_faire = pont.a_faire(args.limit, args.asset_type)
     if args.dry_run:
