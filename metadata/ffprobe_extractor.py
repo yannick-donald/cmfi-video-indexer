@@ -5,14 +5,12 @@ import logging
 import os
 import shutil
 import subprocess
-from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from googleapiclient.http import MediaIoBaseDownload
+from ingestion.downloader import download_to_file
 
 from utils.config import Settings
-from utils.retry import execute_with_retry
 
 LOGGER = logging.getLogger(__name__)
 
@@ -49,16 +47,7 @@ class FfprobeExtractor:
         dest = self.cache_dir / f"{file_id}_{safe_name}"
         if dest.exists():
             return dest
-
-        request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
-        buffer = BytesIO()
-        downloader = MediaIoBaseDownload(buffer, request, chunksize=1024 * 1024)
-        done = False
-        while not done:
-            _, done = execute_with_retry(lambda: downloader.next_chunk())
-
-        dest.write_bytes(buffer.getvalue())
-        return dest
+        return download_to_file(service, file_id, dest)
 
     def _probe(self, path: Path) -> dict[str, Any]:
         cmd = [

@@ -17,7 +17,7 @@ def run_scan(settings: Settings, *, full: bool = False, folder_id: str | None = 
         settings.google_token_path,
         service_account_json=settings.google_service_account_json,
     )
-    repo = VideoRepository(settings.db_path)
+    repo = VideoRepository(settings.db_path, settings.database_url)
     scanner = DriveScanner(settings, repo, creds)
     LOGGER.info(
         "Starting Google Drive scan (incremental=%s, folder_id=%s)",

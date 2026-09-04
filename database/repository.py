@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from database.models import VideoRecord
+from database.driver import Connection, make_driver
 from database.schema import init_database
 from metadata_cleaning.youtube_title import propose_title
 from reporting.duplicates import normalize_for_comparison
@@ -129,15 +130,16 @@ class SearchResult:
 
 
 class VideoRepository:
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, database_url: str = "") -> None:
         self.db_path = db_path
-        init_database(db_path)
+        # Vide = SQLite, le chemin de la production. Une URL postgresql://
+        # bascule le pilote sans rien changer au reste de cette classe.
+        self.driver = make_driver(database_url, db_path)
+        if self.driver.dialect == "sqlite":
+            init_database(db_path)
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
+    def _connect(self) -> Connection:
+        return self.driver.connect()
 
     def delete_demo_videos(self) -> int:
         with self._connect() as conn:
@@ -240,49 +242,9 @@ class VideoRepository:
             conn.commit()
             return internal_id
 
-    def _upsert_fts(self, conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
-        conn.execute("DELETE FROM videos_fts WHERE file_id = ?", (payload.get("file_id", ""),))
-        conn.execute(
-            """
-            INSERT INTO videos_fts(
-                file_id, internal_video_id, file_name, clean_title, editorial_title,
-                original_title, alternate_titles, folder_path, speaker, preacher,
-                ministry, main_theme, spiritual_themes, doctrine_topics,
-                biblical_topics, bible_references, songs, worship_leaders,
-                content_type, event_name, location, series_name, teaching_type,
-                ai_summary, transcript_summary, keywords, semantic_tags
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                payload.get("file_id", ""),
-                payload.get("internal_video_id", ""),
-                payload.get("file_name", ""),
-                payload.get("clean_title", ""),
-                payload.get("editorial_title", ""),
-                payload.get("original_title", ""),
-                payload.get("alternate_titles", ""),
-                payload.get("folder_path", ""),
-                payload.get("speaker", ""),
-                payload.get("preacher", ""),
-                payload.get("ministry", ""),
-                payload.get("main_theme", ""),
-                payload.get("spiritual_themes", ""),
-                payload.get("doctrine_topics", ""),
-                payload.get("biblical_topics", ""),
-                payload.get("bible_references", ""),
-                payload.get("songs", ""),
-                payload.get("worship_leaders", ""),
-                payload.get("content_type", ""),
-                payload.get("event_name", ""),
-                payload.get("location", ""),
-                payload.get("series_name", ""),
-                payload.get("teaching_type", ""),
-                payload.get("ai_summary", ""),
-                payload.get("transcript_summary", ""),
-                payload.get("keywords", ""),
-                payload.get("semantic_tags", ""),
-            ),
-        )
+    def _upsert_fts(self, conn: Connection, payload: dict[str, Any]) -> None:
+        # FTS5 et tsvector n'ont pas la même forme : le pilote tranche.
+        self.driver.fts_upsert(conn, payload)
 
     def update_christian_metadata(self, file_id: str, metadata: dict[str, Any]) -> VideoRecord | None:
         allowed = {key: metadata[key] for key in CHRISTIAN_METADATA_FIELDS if key in metadata}
@@ -1323,6 +1285,87 @@ class VideoRepository:
                     (file_id, term_id, payload.get("metadata_confidence"), field),
                 )
 
+    def apply_transcript_enrichment(
+        self,
+        file_id: str,
+        enrichment: Any,
+        *,
+        source: str = "transcript",
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        """Écrit dans la base ce que l'enrichisseur a déduit d'une transcription.
+
+        Deux règles gouvernent cette méthode :
+
+        **On n'écrase pas un humain.** Les colonnes plates de `videos` ne sont
+        remplies que si elles sont vides. Quelqu'un a saisi « La Piscine de
+        Bethesda » à la main ; une déduction automatique, même juste, ne doit
+        pas passer par-dessus. `overwrite=True` lève la règle, pour une reprise
+        assumée.
+
+        **On peut rejouer.** Les liens précédents de la même `source` sont
+        effacés d'abord : relancer l'enrichissement sur une transcription
+        corrigée remplace proprement, sans accumuler de doublons.
+
+        Le détail complet part dans `video_lexicon_terms`, avec pour chaque
+        terme sa confiance et la citation horodatée qui l'a produit — c'est là
+        qu'un opérateur va voir sur quoi repose une étiquette.
+        """
+        champs = {
+            "main_theme": enrichment.main_theme,
+            "teaching_type": enrichment.teaching_type,
+            "spiritual_themes": enrichment.spiritual_themes,
+            "biblical_topics": enrichment.biblical_topics,
+            "bible_references": enrichment.bible_references,
+            "keywords": enrichment.keywords,
+        }
+        rapport: dict[str, Any] = {"file_id": file_id, "source": source,
+                                   "termes": 0, "colonnes": []}
+
+        with self._connect() as conn:
+            ligne = conn.execute(
+                "SELECT * FROM videos WHERE file_id = ?", (file_id,)
+            ).fetchone()
+            if ligne is None:
+                raise LookupError(f"vidéo inconnue en base : {file_id}")
+            actuel = dict(ligne)
+
+            conn.execute(
+                """
+                DELETE FROM video_lexicon_terms
+                WHERE file_id = ? AND source = ?
+                """,
+                (file_id, source),
+            )
+
+            for terme in enrichment.terms:
+                term_id = self._ensure_lexicon_term(conn, terme.category, terme.term)
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO video_lexicon_terms(
+                        file_id, term_id, source, confidence, evidence)
+                    VALUES(?, ?, ?, ?, ?)
+                    """,
+                    (file_id, term_id, source, terme.confidence, terme.evidence),
+                )
+                rapport["termes"] += 1
+
+            for colonne, valeur in champs.items():
+                if not valeur:
+                    continue
+                if not overwrite and str(actuel.get(colonne) or "").strip():
+                    continue          # un humain est déjà passé par là
+                texte = " | ".join(valeur) if isinstance(valeur, list) else str(valeur)
+                conn.execute(
+                    f"UPDATE videos SET {colonne} = ? WHERE file_id = ?",
+                    (texte, file_id),
+                )
+                rapport["colonnes"].append(colonne)
+
+            conn.commit()
+
+        return rapport
+
     def _ensure_lexicon_term(self, conn: sqlite3.Connection, category: str, term: str) -> int:
         normalized = _normalize_term(term)
         conn.execute(
@@ -1436,7 +1479,6 @@ class VideoRepository:
                     """
                     SELECT DISTINCT folder_path FROM videos
                     WHERE folder_path IS NOT NULL AND folder_path != ''
-                    ORDER BY folder_path COLLATE NOCASE
                     """
                 ).fetchall()
             ]
@@ -1446,7 +1488,6 @@ class VideoRepository:
                     """
                     SELECT DISTINCT file_extension FROM videos
                     WHERE file_extension IS NOT NULL AND file_extension != ''
-                    ORDER BY file_extension COLLATE NOCASE
                     """
                 ).fetchall()
             ]
@@ -1477,10 +1518,16 @@ class VideoRepository:
                     """
                     SELECT DISTINCT shared_drive_name FROM videos
                     WHERE shared_drive_name IS NOT NULL AND shared_drive_name != ''
-                    ORDER BY shared_drive_name COLLATE NOCASE
                     """
                 ).fetchall()
             ]
+        # Tri insensible à la casse fait ici, et non en SQL : PostgreSQL
+        # rejette une expression de tri absente de la sélection quand la requête
+        # est DISTINCT. Trier en Python donne le même ordre sur les deux moteurs.
+        folders = sorted(folders, key=str.casefold)
+        extensions = sorted(extensions, key=str.casefold)
+        shared_drives = sorted(shared_drives, key=str.casefold)
+
         return {
             "folders": folders,
             "extensions": extensions,

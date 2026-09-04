@@ -129,11 +129,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers.add_parser("seed-demo", help="Insert demo videos for testing the web UI")
+
+    worker_parser = subparsers.add_parser(
+        "worker", help="Transcribe and index videos: Drive -> audio -> Whisper -> chunks -> vectors"
+    )
+    worker_parser.add_argument("--limit", type=int, default=None, help="stop after N videos")
+    worker_parser.add_argument("--enqueue", type=int, default=0,
+                               help="queue N videos that have no transcript yet")
+    worker_parser.add_argument("--force", action="store_true",
+                               help="re-transcribe videos already done")
+    worker_parser.add_argument("--status", action="store_true",
+                               help="show the queue and stop")
     return parser
 
 
 def write_report(settings: Settings, output: str | None = None) -> Path:
-    repo = VideoRepository(settings.db_path)
+    repo = VideoRepository(settings.db_path, settings.database_url)
     destination = Path(output) if output else settings.excel_output_path
     summary = export_to_path(repo, destination)
     logging.getLogger("main").info(
@@ -147,6 +158,58 @@ def write_report(settings: Settings, output: str | None = None) -> Path:
     return destination
 
 
+def run_worker(settings: Settings, args: argparse.Namespace, logger: logging.Logger) -> int:
+    """Lance le worker d'ingestion."""
+    from database.driver import make_driver
+    from database.knowledge_repository import KnowledgeRepository
+    from embeddings.provider import make_provider
+    from ingestion.jobs import JobQueue
+    from ingestion.worker import IngestionWorker
+
+    driver = make_driver(settings.database_url, settings.db_path)
+    repo = VideoRepository(settings.db_path, settings.database_url)
+    knowledge = KnowledgeRepository(driver, settings.embedding_dim)
+    queue = JobQueue(driver, max_retries=settings.max_retries)
+
+    if args.status:
+        print("  file d'ingestion :", queue.counts() or "vide")
+        print("  base de connaissance :", knowledge.counts())
+        return 0
+
+    if args.enqueue:
+        from database.repository import SearchFilters
+
+        candidats = [
+            v.file_id
+            for v in repo.search(SearchFilters(), page_size=args.enqueue * 3).items
+            if not knowledge.has_transcript(v.internal_video_id or v.file_id)
+        ][: args.enqueue]
+        ajoutes = queue.enqueue(candidats)
+        logger.info("%s vidéo(s) mise(s) en file (%s déjà connue(s))",
+                    ajoutes, len(candidats) - ajoutes)
+
+    service = None
+    try:
+        from auth.drive_auth import get_credentials
+        from drive_scanner.client import build_drive_service
+
+        service = build_drive_service(get_credentials(settings))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Drive indisponible (%s) — seules les vidéos déjà "
+                       "transcrites pourront être indexées", exc)
+
+    worker = IngestionWorker(
+        settings, repo, knowledge, queue,
+        make_provider(settings.embedding_model, settings.embedding_dim),
+        drive_service=service,
+    )
+    rapport = worker.run(limite=args.limit, force=args.force)
+    print(f"\n  {rapport.resume()}")
+    for erreur in rapport.erreurs[:10]:
+        print(f"    {erreur}")
+    return 0 if not rapport.echoues else 1
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
@@ -157,7 +220,7 @@ def main() -> int:
     logger = logging.getLogger("main")
 
     if args.command == "seed-demo":
-        repo = VideoRepository(settings.db_path)
+        repo = VideoRepository(settings.db_path, settings.database_url)
         seed_demo_data(repo)
         logger.info("Demo videos inserted into %s", settings.db_path)
         return 0
@@ -165,6 +228,9 @@ def main() -> int:
     if args.command == "export":
         write_report(settings, args.output)
         return 0
+
+    if args.command == "worker":
+        return run_worker(settings, args, logger)
 
     if args.command == "scan":
         result = run_scan(settings, full=args.full)

@@ -14,7 +14,7 @@ client_secret*.json
 cache/
 
 database/*.sqlite3
-database/*.sqlite3-*
+database/*.sqlite3*
 database/*.backup*
 
 logs/
@@ -24,3 +24,6 @@ output/
 .ruff_cache/
 .mypy_cache/
 
+
+# Environnement UAT : contient l'URL PostgreSQL avec son mot de passe.
+.env.uat
