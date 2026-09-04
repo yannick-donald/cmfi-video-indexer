@@ -74,6 +74,9 @@ def create_app(settings: Settings) -> FastAPI:
             or request.url.path == "/favicon.ico"
             or request.url.path.startswith("/api/auth/")
             or request.url.path.startswith("/static/")
+            # Le pont worker porte sa propre authentification par jeton : il
+            # est appelé par une machine, qui n'a pas de cookie de session.
+            or request.url.path.startswith("/api/worker/")
         )
         token = request.cookies.get(settings.session_cookie_name, "")
         user = auth_repo.get_session_user(token) if token else None
