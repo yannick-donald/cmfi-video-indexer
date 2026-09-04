@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from classification.llm_enricher import LLMClient, enrich_with_llm, should_use_llm
+from classification.transcript_enricher import enrich_from_transcript
 from database.knowledge_repository import KnowledgeRepository
 from embeddings.provider import EmbeddingProvider
 from ingestion.downloader import NotEnoughSpace, download_to_file
@@ -50,6 +52,8 @@ class Rapport:
     fragments: int = 0
     vecteurs: int = 0
     secondes_audio: float = 0.0
+    termes: int = 0
+    sans_metadonnees: int = 0
     duree: float = 0.0
     erreurs: list[str] = field(default_factory=list)
 
@@ -74,6 +78,7 @@ class IngestionWorker:
         *,
         drive_service: Any = None,
         download: Callable[..., Path] = download_to_file,
+        llm_client: LLMClient | None = None,
     ) -> None:
         self.settings = settings
         self.videos = video_repo
@@ -82,6 +87,9 @@ class IngestionWorker:
         self.provider = provider
         self.drive_service = drive_service
         self.download = download
+        # Sans client, l'enrichissement s'en tient au lexique : c'est le
+        # comportement par défaut, gratuit et reproductible.
+        self.llm_client = llm_client
         self._whisper = None  # chargé une seule fois, pas à chaque vidéo
 
     # ── Boucle ──────────────────────────────────────────────────────────────
@@ -131,6 +139,7 @@ class IngestionWorker:
         if not force and self.knowledge.has_transcript(source_uid):
             LOGGER.info("[%s] déjà transcrite, on passe à l'indexation", file_id)
             segments = self.knowledge.get_segments(source_uid)
+            self._enrichir(file_id, segments, rapport)
             self._indexer(source_uid, video, segments, rapport)
             rapport.ignores += 1
             return
@@ -181,7 +190,10 @@ class IngestionWorker:
                 " (bilingue)" if tr.is_bilingual else "",
             )
 
-            # 4) Fragments et vecteurs
+            # 4) Métadonnées éditoriales, déduites du texte
+            self._enrichir(file_id, tr.segments, rapport)
+
+            # 5) Fragments et vecteurs
             self._indexer(source_uid, video, tr.segments, rapport)
 
         finally:
@@ -189,6 +201,38 @@ class IngestionWorker:
             for chemin in (chemin_video, chemin_audio):
                 if chemin is not None:
                     chemin.unlink(missing_ok=True)
+
+    def _enrichir(self, file_id: str, segments: list, rapport: Rapport) -> None:
+        """Déduit les métadonnées éditoriales du texte et les range en base.
+
+        Cette étape est délibérément non bloquante : une vidéo transcrite et
+        indexée reste utile même si l'étiquetage échoue, alors qu'un worker qui
+        s'arrête ici perdrait le travail de transcription déjà payé.
+        """
+        self.queue.advance(file_id, JobState.GENERATING_METADATA, "métadonnées")
+        try:
+            enrichissement = enrich_from_transcript(segments)
+            origine = "transcript"
+            if should_use_llm(enrichissement, self.llm_client):
+                LOGGER.info("[%s] lexique muet, second passage par le modèle", file_id)
+                enrichissement = enrich_with_llm(segments, self.llm_client)
+                origine = "llm"
+            if enrichissement.is_empty:
+                LOGGER.info("[%s] aucune métadonnée déductible", file_id)
+                rapport.sans_metadonnees += 1
+                return
+            resultat = self.videos.apply_transcript_enrichment(
+                file_id, enrichissement, source=origine)
+            rapport.termes += resultat["termes"]
+            LOGGER.info(
+                "[%s] %s / %s — %d termes, colonnes %s",
+                file_id, enrichissement.main_theme or "?",
+                enrichissement.teaching_type or "?",
+                resultat["termes"], resultat["colonnes"] or "déjà remplies",
+            )
+        except Exception as erreur:                     # noqa: BLE001
+            LOGGER.warning("[%s] enrichissement abandonné : %s", file_id, erreur)
+            rapport.sans_metadonnees += 1
 
     def _telecharger(self, file_id: str, video: Any, temp: Path) -> Path:
         if self.drive_service is None:

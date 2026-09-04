@@ -1285,6 +1285,87 @@ class VideoRepository:
                     (file_id, term_id, payload.get("metadata_confidence"), field),
                 )
 
+    def apply_transcript_enrichment(
+        self,
+        file_id: str,
+        enrichment: Any,
+        *,
+        source: str = "transcript",
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        """Écrit dans la base ce que l'enrichisseur a déduit d'une transcription.
+
+        Deux règles gouvernent cette méthode :
+
+        **On n'écrase pas un humain.** Les colonnes plates de `videos` ne sont
+        remplies que si elles sont vides. Quelqu'un a saisi « La Piscine de
+        Bethesda » à la main ; une déduction automatique, même juste, ne doit
+        pas passer par-dessus. `overwrite=True` lève la règle, pour une reprise
+        assumée.
+
+        **On peut rejouer.** Les liens précédents de la même `source` sont
+        effacés d'abord : relancer l'enrichissement sur une transcription
+        corrigée remplace proprement, sans accumuler de doublons.
+
+        Le détail complet part dans `video_lexicon_terms`, avec pour chaque
+        terme sa confiance et la citation horodatée qui l'a produit — c'est là
+        qu'un opérateur va voir sur quoi repose une étiquette.
+        """
+        champs = {
+            "main_theme": enrichment.main_theme,
+            "teaching_type": enrichment.teaching_type,
+            "spiritual_themes": enrichment.spiritual_themes,
+            "biblical_topics": enrichment.biblical_topics,
+            "bible_references": enrichment.bible_references,
+            "keywords": enrichment.keywords,
+        }
+        rapport: dict[str, Any] = {"file_id": file_id, "source": source,
+                                   "termes": 0, "colonnes": []}
+
+        with self._connect() as conn:
+            ligne = conn.execute(
+                "SELECT * FROM videos WHERE file_id = ?", (file_id,)
+            ).fetchone()
+            if ligne is None:
+                raise LookupError(f"vidéo inconnue en base : {file_id}")
+            actuel = dict(ligne)
+
+            conn.execute(
+                """
+                DELETE FROM video_lexicon_terms
+                WHERE file_id = ? AND source = ?
+                """,
+                (file_id, source),
+            )
+
+            for terme in enrichment.terms:
+                term_id = self._ensure_lexicon_term(conn, terme.category, terme.term)
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO video_lexicon_terms(
+                        file_id, term_id, source, confidence, evidence)
+                    VALUES(?, ?, ?, ?, ?)
+                    """,
+                    (file_id, term_id, source, terme.confidence, terme.evidence),
+                )
+                rapport["termes"] += 1
+
+            for colonne, valeur in champs.items():
+                if not valeur:
+                    continue
+                if not overwrite and str(actuel.get(colonne) or "").strip():
+                    continue          # un humain est déjà passé par là
+                texte = " | ".join(valeur) if isinstance(valeur, list) else str(valeur)
+                conn.execute(
+                    f"UPDATE videos SET {colonne} = ? WHERE file_id = ?",
+                    (texte, file_id),
+                )
+                rapport["colonnes"].append(colonne)
+
+            conn.commit()
+
+        return rapport
+
     def _ensure_lexicon_term(self, conn: sqlite3.Connection, category: str, term: str) -> int:
         normalized = _normalize_term(term)
         conn.execute(
