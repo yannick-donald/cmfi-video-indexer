@@ -62,19 +62,29 @@ fi
 echo ""
 
 # --- Quoi faire ---
-echo "  ${BLEU}1${RAZ}  Recenser ce qui reste  ${GRIS}— ne télécharge rien${RAZ}"
-echo "  ${BLEU}2${RAZ}  Transcrire les découpes  ${GRIS}— les plus courtes, à commencer par là${RAZ}"
-echo "  ${BLEU}3${RAZ}  Transcrire tout le corpus  ${GRIS}— plusieurs jours de calcul${RAZ}"
-echo "  ${BLEU}4${RAZ}  Quitter"
+# Chaque intitulé dit exactement ce qui sera lancé. Un recensement qui ne
+# porte pas sur le même périmètre que la transcription qui suit ne sert à rien :
+# sans filtre, la liste remonte de vieilles vidéos brutes de taille inconnue,
+# et non les découpes.
+echo "  ${GRIS}Les découpes${RAZ}"
+echo "  ${BLEU}1${RAZ}  Les recenser  ${GRIS}— ne télécharge rien${RAZ}"
+echo "  ${BLEU}2${RAZ}  Les transcrire  ${GRIS}— à commencer par là${RAZ}"
+echo ""
+echo "  ${GRIS}Tout le corpus, découpes et vidéos brutes${RAZ}"
+echo "  ${BLEU}3${RAZ}  Le recenser"
+echo "  ${BLEU}4${RAZ}  Le transcrire  ${GRIS}— plusieurs jours de calcul${RAZ}"
+echo ""
+echo "  ${BLEU}5${RAZ}  Quitter"
 echo ""
 read -r -p "  Votre choix [1] : " CHOIX
 CHOIX="${CHOIX:-1}"
 echo ""
 
 case "$CHOIX" in
-  1) ARGS=(--dry-run) ;;
+  1) ARGS=(--asset-type cut --dry-run --limit 200) ;;
   2) ARGS=(--asset-type cut) ;;
-  3) echo "${JAUNE}  Le corpus entier représente 1,28 To à télécharger et"
+  3) ARGS=(--dry-run --limit 200) ;;
+  4) echo "${JAUNE}  Le corpus entier représente 1,28 To à télécharger et"
      echo "  plusieurs centaines d'heures de calcul.${RAZ}"
      echo ""
      read -r -p "  Confirmer ? [o/N] " SUR
@@ -83,9 +93,12 @@ case "$CHOIX" in
   *) echo "${GRIS}  Annulé.${RAZ}"; fermer 0 ;;
 esac
 
-echo "${GRIS}  Ctrl-C arrête à tout moment : seule la vidéo en cours est perdue,${RAZ}"
-echo "${GRIS}  celles déjà déposées ne seront pas refaites.${RAZ}"
-echo ""
+case " ${ARGS[*]} " in
+  *" --dry-run "*) ;;
+  *) echo "${GRIS}  Ctrl-C arrête à tout moment : seule la vidéo en cours est perdue,${RAZ}"
+     echo "${GRIS}  celles déjà déposées ne seront pas refaites.${RAZ}"
+     echo "" ;;
+esac
 
 WORKER_TOKEN="$JETON" "$PY" scripts/worker_distant.py --url "$URL" "${ARGS[@]}"
 CODE=$?
