@@ -8,7 +8,7 @@
   <link rel="alternate icon" href="/static/favicon.ico?v=1" sizes="32x32">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v=1">
   <meta name="theme-color" content="#0a0a0c">
-  <link rel="stylesheet" href="/static/style.css?v=watched-1">
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
 </head>
 <body
   data-public-demo="{{ 'true' if public_demo else 'false' }}"
@@ -420,6 +420,6 @@
   {% endif %}
 
   <datalist id="labelSuggestions"></datalist>
-  <script src="/static/app.js?v=watched-1"></script>
+  <script src="/static/app.js?v={{ asset_version }}"></script>
 </body>
 </html>

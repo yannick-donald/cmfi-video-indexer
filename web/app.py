@@ -5,6 +5,7 @@ import csv
 import io
 import logging
 from datetime import UTC, datetime
+import hashlib
 import unicodedata
 from hmac import compare_digest
 from pathlib import Path
@@ -37,6 +38,17 @@ from knowledge.chunking import Segment
 from reporting.excel_exporter import export_to_stream
 from utils.config import Settings
 from utils.formatters import format_bytes, format_duration
+
+def _version_des_assets(static_dir: Path) -> str:
+    """Empreinte courte des fichiers servis au navigateur."""
+    empreinte = hashlib.sha1()
+    for nom in ("app.js", "style.css"):
+        chemin = static_dir / nom
+        if chemin.is_file():
+            empreinte.update(str(chemin.stat().st_mtime_ns).encode())
+            empreinte.update(str(chemin.stat().st_size).encode())
+    return empreinte.hexdigest()[:10]
+
 
 def _nom_ascii(nom: str) -> str:
     """Nom de fichier sûr pour un en-tête HTTP, qui n'accepte pas l'UTF-8."""
@@ -72,6 +84,10 @@ def create_app(settings: Settings) -> FastAPI:
     background_tasks: set[asyncio.Task[Any]] = set()
     scan_state: dict[str, Any] = _initial_scan_state(repo)
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+    # Version dérivée du contenu réel des fichiers. Une chaîne figée dans le
+    # gabarit — c'était « watched-1 » — fait que le navigateur ne retélécharge
+    # jamais rien : le code part en production et personne ne le voit.
+    templates.env.globals["asset_version"] = _version_des_assets(STATIC_DIR)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     @app.middleware("http")
@@ -416,10 +432,11 @@ def create_app(settings: Settings) -> FastAPI:
             LOGGER.warning("[%s] enrichissement abandonné : %s", file_id, erreur)
             enrichissement["error"] = str(erreur)
 
-        # Si la vidéo avait été mise en file par le bouton, elle n'a plus lieu
-        # d'y rester : le travail est fait.
+        # Si la vidéo avait été mise en file par le bouton, le travail est fait.
+        # `reset` la remettrait en attente, et la fiche afficherait « En file
+        # d'attente » sur une vidéo déjà transcrite.
         if queue.get(file_id):
-            queue.reset(file_id)
+            queue.complete(file_id)
         LOGGER.info("[%s] transcription reçue : %d segments", file_id, len(segments))
         return {
             "file_id": file_id,
