@@ -5,6 +5,7 @@ import csv
 import io
 import logging
 from datetime import UTC, datetime
+import unicodedata
 from hmac import compare_digest
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,13 @@ from knowledge.chunking import Segment
 from reporting.excel_exporter import export_to_stream
 from utils.config import Settings
 from utils.formatters import format_bytes, format_duration
+
+def _nom_ascii(nom: str) -> str:
+    """Nom de fichier sûr pour un en-tête HTTP, qui n'accepte pas l'UTF-8."""
+    plie = unicodedata.normalize("NFKD", nom).encode("ascii", "ignore").decode()
+    propre = "".join(c if c.isalnum() or c in " -_." else "-" for c in plie).strip()
+    return (propre or "transcription")[:80]
+
 
 WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
@@ -445,6 +453,75 @@ def create_app(settings: Settings) -> FastAPI:
             "attempts": getattr(job, "attempts", 0) if job else 0,
             "error": getattr(job, "error", "") if job else "",
             "transcript": dict(ligne) if ligne else None,
+        }
+
+    def _horodatage(t: float, sep: str = ",") -> str:
+        m, s = divmod(max(t, 0.0), 60)
+        h, m = divmod(int(m), 60)
+        return f"{h:02d}:{int(m):02d}:{s:06.3f}".replace(".", sep)
+
+    @app.get("/api/videos/{file_id}/transcript")
+    async def transcript_text(
+        file_id: str,
+        format: str = Query("json", pattern="^(json|srt|txt)$"),
+    ) -> Any:
+        """Le texte transcrit, à lire dans l'application ou à emporter.
+
+        Une transcription de trois heures fait environ 850 segments, soit
+        140 Ko : elle tient dans une réponse, sans pagination. La borne existe
+        pour les cas aberrants, pas pour l'usage courant.
+        """
+        video = repo.get_video(file_id)
+        if not video:
+            raise HTTPException(status_code=404, detail="Video not found")
+        source_uid = video.internal_video_id or file_id
+
+        with repo._connect() as conn:
+            lignes = conn.execute(
+                """
+                SELECT segment_index, start_time, end_time, text, language
+                FROM transcript_segments
+                WHERE source_uid = ?
+                ORDER BY segment_index
+                LIMIT 20000
+                """,
+                (source_uid,),
+            ).fetchall()
+
+        if not lignes:
+            raise HTTPException(status_code=404, detail="No transcript for this video")
+
+        segments = [dict(l) for l in lignes]
+        nom = (video.editorial_title or video.file_name or file_id).rsplit(".", 1)[0]
+
+        if format == "srt":
+            corps = "\n".join(
+                f"{i}\n{_horodatage(s['start_time'])} --> {_horodatage(s['end_time'])}\n{s['text']}\n"
+                for i, s in enumerate(segments, 1)
+            )
+            return Response(
+                content=corps,
+                media_type="application/x-subrip; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{_nom_ascii(nom)}.srt"'},
+            )
+
+        if format == "txt":
+            corps = "\n".join(
+                f"[{_horodatage(s['start_time'], '.')} -> {_horodatage(s['end_time'], '.')}] {s['text']}"
+                for s in segments
+            )
+            return Response(
+                content=corps,
+                media_type="text/plain; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{_nom_ascii(nom)}.txt"'},
+            )
+
+        return {
+            "file_id": file_id,
+            "source_uid": source_uid,
+            "count": len(segments),
+            "words": sum(len((s["text"] or "").split()) for s in segments),
+            "segments": segments,
         }
 
     @app.get("/api/videos/{file_id}/transcription")

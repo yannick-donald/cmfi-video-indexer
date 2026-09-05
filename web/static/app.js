@@ -725,7 +725,15 @@ function renderTranscription(item, etat) {
   let detail = "";
   if (transcrite) {
     const t = etat.transcript;
-    detail = `<p class="metadata-hint">${t.segment_count} segments · modèle ${escapeHtml(String(t.model || "?"))}.</p>`;
+    const id = encodeURIComponent(etat.file_id);
+    detail = `
+      <p class="metadata-hint">${t.segment_count} segments · modèle ${escapeHtml(String(t.model || "?"))}.</p>
+      <div class="transcript-actions">
+        <button id="showTranscriptButton" type="button">Voir le texte</button>
+        <a class="transcript-download" href="/api/videos/${id}/transcript?format=srt">Sous-titres .srt</a>
+        <a class="transcript-download" href="/api/videos/${id}/transcript?format=txt">Texte .txt</a>
+      </div>
+      <div id="transcriptText" class="transcript-text" hidden></div>`;
   } else if (cle === "failed") {
     detail = `<p class="metadata-hint">Dernière erreur : ${escapeHtml(String(etat.error || "inconnue"))} (${etat.attempts} tentative(s)).</p>`;
   } else if (enCours) {
@@ -760,6 +768,55 @@ async function loadTranscriptionState(fileId) {
   } catch (error) {
     return null;
   }
+}
+
+async function showTranscriptText() {
+  const fileId = els.detailContent.dataset.fileId;
+  const bloc = document.getElementById("transcriptText");
+  const bouton = document.getElementById("showTranscriptButton");
+
+  // Deuxième clic : on replie, sans recharger.
+  if (!bloc.hidden) {
+    bloc.hidden = true;
+    bouton.textContent = "Voir le texte";
+    return;
+  }
+  if (bloc.dataset.loaded === "1") {
+    bloc.hidden = false;
+    bouton.textContent = "Masquer le texte";
+    return;
+  }
+
+  bouton.disabled = true;
+  bloc.hidden = false;
+  bloc.innerHTML = `<p class="metadata-hint">Chargement…</p>`;
+  try {
+    const response = await fetch(`/api/videos/${encodeURIComponent(fileId)}/transcript`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    bloc.innerHTML =
+      `<p class="metadata-hint">${data.count} segments, ${data.words.toLocaleString()} mots.</p>` +
+      data.segments
+        .map(
+          (s) =>
+            `<p class="transcript-line"><span class="transcript-time">${formatSeconds(s.start_time)}</span>${escapeHtml(s.text)}</p>`
+        )
+        .join("");
+    bloc.dataset.loaded = "1";
+    bouton.textContent = "Masquer le texte";
+  } catch (error) {
+    bloc.innerHTML = `<p class="metadata-hint">Lecture impossible : ${escapeHtml(error.message)}</p>`;
+  } finally {
+    bouton.disabled = false;
+  }
+}
+
+function formatSeconds(t) {
+  const total = Math.max(0, Math.floor(t || 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
 async function queueTranscription() {
@@ -1415,6 +1472,9 @@ els.detailContent.addEventListener("click", (event) => {
   }
   if (target.id === "transcribeButton") {
     queueTranscription();
+  }
+  if (target.id === "showTranscriptButton") {
+    showTranscriptText();
   }
   if (target.classList.contains("copy-id-btn")) {
     copyInternalId(target);
