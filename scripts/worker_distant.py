@@ -185,7 +185,14 @@ def main() -> int:
                   f" {(v.get('file_size') or 0)/1e9:>6.2f} Go  {v.get('file_name','')[:60]}")
         return 0
 
-    drive = build_drive_service(authenticate())
+    settings.ensure_dirs()
+    drive = build_drive_service(
+        authenticate(
+            settings.google_credentials_path,
+            settings.google_token_path,
+            service_account_json=settings.google_service_account_json,
+        )
+    )
     faits = rates = 0
 
     while a_faire:
